@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "skills": {
+    "cmux": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux/SKILL.md",
+      "computedHash": "f83a74295fb40f6c0f0abad386b9fa7e0305aed6789c1a94e635b367f206d94c"
+    },
+    "cmux-browser": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux-browser/SKILL.md",
+      "computedHash": "7206737c08f3ce8efd87fcf450b6bfe4ed69dfb8c8861ab8d7d9e078732136d3"
+    },
+    "cmux-customization": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux-customization/SKILL.md",
+      "computedHash": "2c0c7a754a738742da6b62735a5d56197bc971074a1a492a80293b058be1c7a2"
+    },
+    "cmux-diagnostics": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux-diagnostics/SKILL.md",
+      "computedHash": "f308f1ef2f3d65a1a0fd57797a0b31caa8c788798be023151033a2a20c8926cc"
+    },
+    "cmux-keyboard-shortcuts": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux-keyboard-shortcuts/SKILL.md",
+      "computedHash": "ffcafb4ebdcc193102e303140c22f85c16ee93fdd73dde30e13695e41b6ffd64"
+    },
+    "cmux-markdown": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux-markdown/SKILL.md",
+      "computedHash": "5cd75e51d5d576dffcce54abf391165005e6b0f70ab89133f4fe432cc8a00f63"
+    },
+    "cmux-settings": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux-settings/SKILL.md",
+      "computedHash": "d569f690feec33667ad7019def6a9f32494bd76fdf29cee78fad4b26c426cff1"
+    },
+    "cmux-workspace": {
+      "source": "manaflow-ai/cmux",
+      "sourceType": "github",
+      "skillPath": "skills/cmux-workspace/SKILL.md",
+      "computedHash": "92aafcdb32fa2f410f7a669cbd7c9a5caf765d4a01595c35a3bf08823409fd41"
+    },
+    "gemini-api-dev": {
+      "source": "google-gemini/gemini-skills",
+      "sourceType": "github",
+      "skillPath": "skills/gemini-api-dev/SKILL.md",
+      "computedHash": "e358693ab81864c2ed8fae87dd404ee41173e615f0d04834161cc1343bff1354"
+    },
+    "mcp-builder": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/mcp-builder/SKILL.md",
+      "computedHash": "826e46adf81e1372282e205c34e1a2ee876e72148007726e4a2512599d2fef7b"
+    },
+    "wxt-browser-extensions": {
+      "source": "pproenca/dot-skills",
+      "sourceType": "github",
+      "skillPath": "skills/.experimental/wxt-browser-extensions/SKILL.md",
+      "computedHash": "3cb5453d026a8a223bc3d788bd5ddb0dae230a39508ae002a66cbce67a8f0e96"
+    }
+  }
+}
