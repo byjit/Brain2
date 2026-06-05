@@ -9,6 +9,7 @@ Save content from anywhere, and bring it as context to every AI agents you use.
 ## Repository Structure
 
 - [extension/](/extension): Chrome Extension built using WXT, React, TypeScript, and Tailwind CSS.
+- [backend/](/backend): Python + FastAPI backend (per-user SQLite memory store). Managed with **uv**, Python pinned to **3.12**. See [backend/ARCHITECTURE.md](/backend/ARCHITECTURE.md) for layout and conventions.
 - [mcp/](/mcp): Directory for Model Context Protocol (MCP) servers.
 - [docs/](/docs): Product documentation and specifications (e.g., [spec.md](/docs/spec.md)).
 - [.agents/](/.agents) / [.claude/](/.claude): AI agent configurations and shared skills (symlinked).
@@ -46,9 +47,20 @@ Save content from anywhere, and bring it as context to every AI agents you use.
 - **Testing**: Vitest
 - **Package Manager**: pnpm (uses [pnpm-lock.yaml](/extension/pnpm-lock.yaml))
 
+### Backend (FastAPI)
+
+- **Language/Runtime**: Python 3.12 (pinned via `backend/.python-version`)
+- **Framework**: FastAPI + Uvicorn
+- **Storage**: Per-user SQLite (`{user_id}.db`) with FTS5 + sqlite-vec (`vec0`, 768-dim)
+- **Config**: pydantic-settings, reading the repo-root `.env`
+- **Testing**: pytest
+- **Package Manager**: uv (uses `backend/pyproject.toml` + `uv.lock`)
+
 ## Available Scripts
 
-All scripts are executed from the [extension/](/extension) directory:
+### Extension scripts
+
+All extension scripts are executed from the [extension/](/extension) directory:
 
 - `pnpm dev`: Start WXT development server (launches Chrome extension with hot reload)
 - `pnpm dev:firefox`: Start WXT development server targeting Firefox
@@ -59,3 +71,11 @@ All scripts are executed from the [extension/](/extension) directory:
 - `pnpm compile`: Run TypeScript compilation check (`tsc --noEmit`)
 - `pnpm test`: Run tests with Vitest once
 - `pnpm test:watch`: Run tests with Vitest in watch mode
+
+### Backend scripts
+
+All backend scripts are executed from the [backend/](/backend) directory:
+
+- `uv sync`: Install / sync Python dependencies into `.venv`
+- `uv run pytest -q`: Run the backend test suite
+- `uv run uvicorn brain2.main:app --reload`: Start the FastAPI dev server
