@@ -1,4 +1,4 @@
-import { ArrowDownToLine, Github } from "lucide-react";
+import { ArrowRight, Github } from "lucide-react";
 import { LogoIcon } from "@/components/Logo";
 import { APP_NAME } from "@/lib/constant";
 
@@ -15,28 +15,28 @@ export const Hero = () => {
 
 			{/* Static Slogan */}
 			<p className="text-lg leading-relaxed mb-3 text-foreground font-semibold">
-				The local sandbox for coding agents
+				Save your context in one place, and bring it to all AI agents you use
 			</p>
 
 			{/* Subtitle */}
 			<p className="text-[15px] leading-relaxed text-muted-foreground mb-6">
-				Native macOS & Linux app built for running coding agents. Visual
-				filesystem logs, resource isolation, real-time token tracking, and a
-				socket API for agent coordination.
+				An open-source personal memory store for developers. Save context once via Chrome extension 
+				or terminal, and let your AI tools (Claude Code, Cursor, ChatGPT, etc.) retrieve it instantly 
+				using the Model Context Protocol (MCP). Zero filing effort, perfect semantic recall.
 			</p>
 
 			{/* Action Buttons */}
 			<div className="flex flex-wrap items-center gap-3 mb-8">
 				<a
 					className="inline-flex items-center whitespace-nowrap rounded-full font-medium bg-foreground text-background hover:opacity-85 transition-opacity gap-2.5 px-5 py-2.5 text-[15px]"
-					href="/download"
+					href="/login"
         >
-          <ArrowDownToLine />
-					Download for Mac
+          <ArrowRight className="h-4 w-4" />
+					Get Started
 				</a>
 				<a
 					className="inline-flex items-center whitespace-nowrap gap-2 rounded-full border border-border px-5 py-2.5 text-[15px] font-medium text-foreground hover:bg-muted/30 transition-colors"
-					href="https://github.com/manaflow-ai/cmux"
+					href="https://github.com/byjit/Brain2"
 					rel="noopener noreferrer"
 					target="_blank"
 				>
@@ -53,36 +53,36 @@ export const Hero = () => {
 				<ul className="space-y-3 text-[15px] text-muted-foreground leading-relaxed">
 					{[
 						{
-							title: "Visual diffs",
-							desc: "side-by-side display of modifications made by agents in real-time",
+							title: "Chrome extension save",
+							desc: "capture full web pages, selections, or custom notes with zero friction",
 						},
 						{
-							title: "Sandbox isolation",
-							desc: "secure containerized environments so agents don't harm your local machine",
+							title: "MCP integration",
+							desc: "connect and query your memory store directly from Claude Code, Cursor, or ChatGPT",
 						},
 						{
-							title: "Token budgeting",
-							desc: "track and cap API costs automatically with custom alerts and limits",
+							title: "Background enrichment",
+							desc: "Gemini Flash automatically summarizes and tags items asynchronously",
 						},
 						{
-							title: "Embedded terminal",
-							desc: "fully interactive shell with breakpoint debugging for agent execution",
+							title: "Vocabulary protection",
+							desc: "RAG-grounded tagging and write-time canonicalization prevent duplicate tags",
 						},
 						{
-							title: "Scriptable CLI",
-							desc: "socket API and command line interface to programmatically control execution",
+							title: "Private SQLite storage",
+							desc: "isolated per-user database files with full-text search (FTS5) and vector indexing",
 						},
 						{
-							title: "GPU-accelerated",
-							desc: "high-performance log rendering and filesystem diff animations",
+							title: "Agent write-back",
+							desc: "allow connected AI agents to save notes and updates back to your store",
 						},
 						{
-							title: "Cross-platform",
-							desc: "native Swift wrapper for macOS, lightweight GTK layer for Linux",
+							title: "Hybrid search",
+							desc: "combines lexical BM25 matches with note vector embeddings for precise recall",
 						},
 						{
-							title: "Keyboard shortcuts",
-							desc: "comprehensive shortcuts for splits, container restarts, and token approvals",
+							title: "Failure recovery list",
+							desc: "a dedicated 'needs attention' repair surface to ensure no capture is lost",
 						},
 					].map((feature) => (
 						<li key={feature.title} className="flex gap-3">

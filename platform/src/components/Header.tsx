@@ -30,7 +30,7 @@ export default function Header() {
 			</nav>
 
 			<div className="hidden md:flex items-center gap-4">
-				<Button>Get Mirage</Button>
+				<Button>Get Brain2</Button>
 			</div>
 
 			<Button className="md:hidden p-2" onClick={() => setIsOpen(!isOpen)}>

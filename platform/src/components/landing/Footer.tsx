@@ -23,7 +23,7 @@ export const Footer = () => {
 		{
 			title: "Social",
 			links: [
-				{ label: "GitHub", href: "https://github.com/manaflow-ai/cmux" },
+				{ label: "GitHub", href: "https://github.com/byjit/Brain2" },
 				{ label: "X / Twitter", href: "https://x.com" },
 				{ label: "Discord", href: "https://discord.com" },
 			],
@@ -31,7 +31,7 @@ export const Footer = () => {
       {
 			title: "Contact Us",
 			links: [
-				{ label: "Contact", href: "mailto:support@mirage.dev" },
+				{ label: "Contact", href: "mailto:support@brain2.app" },
 			],
 		},
 
