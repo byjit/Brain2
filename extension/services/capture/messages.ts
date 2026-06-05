@@ -20,5 +20,6 @@ export const extractPageMsg = defineMessage({
   response: z.object({ title: z.string(), url: z.string(), textContent: z.string() }),
 });
 
-// background -> popup (event, no response)
-export const needsAttentionChanged = defineMessage({ name: "needs-attention-changed", request: z.object({ count: z.number() }) });
+// NOTE: the popup learns of needs-attention changes by watching `needsAttentionStore`
+// directly (chrome.storage.onChanged fires cross-context), so there is no separate
+// bg->popup event message — the store is the single source of truth.

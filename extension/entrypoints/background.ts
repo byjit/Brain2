@@ -13,7 +13,6 @@ import {
   signInMsg,
   getFailedMsg,
   repairMsg,
-  needsAttentionChanged,
   extractPageMsg,
 } from "@/services/capture/messages";
 
@@ -48,12 +47,13 @@ async function updateBadge(): Promise<void> {
   await browser.action.setBadgeBackgroundColor({ color: "#DC2626" }); // a clear "attention" red badge
 }
 
-/** Pull the failed-entry total, persist it, repaint the badge, and notify the popup. */
+/** Pull the failed-entry total, persist it, and repaint the badge. The popup observes
+ * the change via `needsAttentionStore.watch` (chrome.storage.onChanged), so no event
+ * message is needed. */
 async function refreshFailed(): Promise<number> {
   const { total } = await client.getFailed();
   await needsAttentionStore.set(total);
   await updateBadge();
-  needsAttentionChanged.emit({ count: total }, { to: "popup" });
   return total;
 }
 
@@ -150,7 +150,6 @@ function registerMessageHandlers(): void {
     const next = Math.max(0, (await needsAttentionStore.get()) - 1);
     await needsAttentionStore.set(next);
     await updateBadge();
-    needsAttentionChanged.emit({ count: next }, { to: "popup" });
     return { ok: true };
   });
 }
