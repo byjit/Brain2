@@ -5,6 +5,7 @@ description = "Brain2 backend: per-user SQLite memory store with FastAPI."
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.136.3",
+    "mcp>=1.12,<2",
     "nanoid>=2.0.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.1",

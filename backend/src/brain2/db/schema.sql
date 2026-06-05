@@ -51,12 +51,17 @@ CREATE TABLE IF NOT EXISTS tag_aliases (
   canonical TEXT NOT NULL REFERENCES tags(name)
 );
 
--- BM25: title, tags, and persisted content (catches exact identifiers)
+-- BM25: title, tags, and persisted content (catches exact identifiers).
+-- tokenize='trigram': 3-char substring matching across scripts so CJK content
+-- (which unicode61 stores as one un-splittable token) is searchable by substring
+-- (spec §15 CJK recall). Decided before rows accumulate, since changing the virtual
+-- table after data exists requires a full index rebuild.
 CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
   id UNINDEXED,
   title,
   tags_text,        -- denormalized: "rust http async"
-  content           -- present only for clip/conversation/note
+  content,          -- present only for clip/conversation/note
+  tokenize = 'trigram'
 );
 
 -- Semantic search over the note

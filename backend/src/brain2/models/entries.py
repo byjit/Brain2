@@ -21,6 +21,13 @@ class SaveStatus(str, Enum):
     UPDATED = "updated"
 
 
+# Input bounds (spec §7.3): titles/URLs are short; bodies (captured_text/note) get a
+# larger but still bounded cap so a buggy/hostile client can't persist or FTS-index a
+# multi-MB blob. Overflow yields a 422 instead of a silently stored blob.
+_MAX_SHORT = 2_048  # title, url, source_url
+_MAX_BODY = 262_144  # captured_text, note (~256 KB)
+
+
 class CreateEntryRequest(BaseModel):
     """Body for POST /entries.
 
@@ -31,13 +38,29 @@ class CreateEntryRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     type: EntryType = Field(description="Capture type: page, clip, conversation, or note")
-    url: str | None = Field(default=None, description="Source URL; normalized for dedup (not used for notes)")
-    title: str | None = Field(default=None, description="Page <title> or OG title")
+    url: str | None = Field(
+        default=None,
+        max_length=_MAX_SHORT,
+        description="Source URL; normalized for dedup (not used for notes)",
+    )
+    title: str | None = Field(
+        default=None, max_length=_MAX_SHORT, description="Page <title> or OG title"
+    )
     captured_text: str | None = Field(
         default=None,
+        max_length=_MAX_BODY,
         description="Raw captured text; persisted only for clip/conversation/note",
     )
-    source_url: str | None = Field(default=None, description="For clips: the page the selection came from")
+    note: str | None = Field(
+        default=None,
+        max_length=_MAX_BODY,
+        description="Note override (spec §10): authored note text; skips LLM summarization",
+    )
+    source_url: str | None = Field(
+        default=None,
+        max_length=_MAX_SHORT,
+        description="For clips: the page the selection came from",
+    )
 
     @model_validator(mode="after")
     def _validate_by_type(self) -> "CreateEntryRequest":

@@ -1,22 +1,46 @@
 """FastAPI application factory for the Brain2 backend.
 
-Wires the API routers. Auth, the async worker, and MCP transport arrive in later
-milestones (see backend/ARCHITECTURE.md). Run with:
+Wires the REST routers and mounts the MCP server (streamable HTTP transport) so AI
+agents can call the ``save``/``retrieve`` tools. Real auth and the async worker arrive
+in later milestones (see backend/ARCHITECTURE.md). Run with:
 
     uv run uvicorn brain2.main:app --reload
 """
 
+import contextlib
+from collections.abc import AsyncIterator
+
 from fastapi import FastAPI
+from mcp.server.transport_security import TransportSecuritySettings
 
 from brain2.api import entries
+from brain2.mcp.server import build_mcp_server
+
+# Path under which the MCP transport is mounted; the SDK serves the endpoint at
+# ``{MCP_MOUNT}/mcp`` (streamable HTTP). Documented in ARCHITECTURE.md.
+MCP_MOUNT = "/mcp"
 
 
-def create_app() -> FastAPI:
-    """Build and configure the FastAPI application."""
+def create_app(mcp_transport_security: TransportSecuritySettings | None = None) -> FastAPI:
+    """Build and configure the FastAPI application.
+
+    ``mcp_transport_security`` is forwarded to the MCP server for tests that need a
+    permissive DNS-rebinding allow-list; production uses the SDK's secure default.
+    """
+    mcp = build_mcp_server(transport_security=mcp_transport_security)
+    mcp_app = mcp.streamable_http_app()
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # The streamable-HTTP session manager must run for the app's lifetime.
+        async with mcp.session_manager.run():
+            yield
+
     app = FastAPI(
         title="Brain2 Backend",
         version="0.1.0",
         description="Per-user SQLite memory store. Save once, recall anywhere over MCP.",
+        lifespan=lifespan,
     )
 
     @app.get("/health", tags=["health"])
@@ -25,6 +49,8 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     app.include_router(entries.router)
+    # Mount the MCP ASGI app; tools live at ``{MCP_MOUNT}/mcp``.
+    app.mount(MCP_MOUNT, mcp_app)
     return app
 
 

@@ -161,6 +161,18 @@ def test_page_without_url_rejected(client):
     assert r.status_code == 422
 
 
+def test_oversized_title_rejected(client):
+    # Unbounded title would bloat the row and the FTS index; reject with 422.
+    r = _post(client, url="https://example.com/big", title="t" * 5000, type="page")
+    assert r.status_code == 422
+
+
+def test_oversized_captured_text_rejected(client):
+    # Multi-MB bodies must not be persisted/indexed verbatim.
+    r = _post(client, captured_text="x" * 2_000_000, type="note")
+    assert r.status_code == 422
+
+
 # --- helper that reads an entry row back through a debug-free path ---------------
 
 def _fetch_entry(client, entry_id):

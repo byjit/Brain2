@@ -51,7 +51,9 @@ Save content from anywhere, and bring it as context to every AI agents you use.
 
 - **Language/Runtime**: Python 3.12 (pinned via `backend/.python-version`)
 - **Framework**: FastAPI + Uvicorn
-- **Storage**: Per-user SQLite (`{user_id}.db`) with FTS5 + sqlite-vec (`vec0`, 768-dim)
+- **MCP**: official MCP Python SDK (`mcp`, FastMCP) mounted into FastAPI over the
+  streamable-HTTP transport at `/mcp` (the spec §6 names SSE; see backend/ARCHITECTURE.md)
+- **Storage**: Per-user SQLite (`{user_id}.db`) with FTS5 (BM25 keyword search) + sqlite-vec (`vec0`, 768-dim)
 - **Config**: pydantic-settings, reading the repo-root `.env`
 - **Testing**: pytest
 - **Package Manager**: uv (uses `backend/pyproject.toml` + `uv.lock`)
