@@ -12,15 +12,22 @@ import { isNoHandlerError, makeNoHandlerError } from './types';
  * stays free of any hard-coded subpath.
  */
 export interface WebextBridgeTransport {
+  // `data` is typed loosely (`any`) so the adapter accepts webext-bridge's
+  // stricter generic `sendMessage`/`onMessage` overloads directly — passing a
+  // function with a narrower parameter type to a wider one is unsound under
+  // strict contravariant checking, which is what the documented
+  // `createWebextBridge({ sendMessage, onMessage })` call pattern requires.
   sendMessage: (
     messageId: string,
-    data: unknown,
-    destination: string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    data: any,
+    destination?: any,
   ) => Promise<unknown>;
   onMessage: (
     messageId: string,
-    handler: (message: { data: unknown }) => unknown | Promise<unknown>,
-  ) => void;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    handler: (message: { data: any }) => any,
+  ) => unknown;
 }
 
 /**

@@ -13,5 +13,12 @@ export const repairMsg      = defineMessage({ name: "repair",       request: z.o
 // content -> background
 export const saveClipMsg    = defineMessage({ name: "save-clip",    request: SaveRequest, response: SaveResult });
 
+// background -> content (request page/conversation extraction from the active tab)
+export const extractPageMsg = defineMessage({
+  name: "extract-page",
+  request: z.object({ mode: z.enum(["page", "conversation"]) }),
+  response: z.object({ title: z.string(), url: z.string(), textContent: z.string() }),
+});
+
 // background -> popup (event, no response)
 export const needsAttentionChanged = defineMessage({ name: "needs-attention-changed", request: z.object({ count: z.number() }) });
