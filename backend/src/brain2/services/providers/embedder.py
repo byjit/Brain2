@@ -18,6 +18,14 @@ from typing import Protocol, runtime_checkable
 # 768-dim for both note and tag-description embeddings (spec §9.2 vec0 FLOAT[768]).
 EMBEDDING_DIM = 768
 
+# Upper bound on characters sent to the embedder. The embedding API has an input token
+# budget, so an oversized text (tens of KB) would fail to embed on every attempt and turn
+# an otherwise-valid entry into a permanent failure. Callers embed a bounded prefix instead
+# so the entry still gets a representative vector and stays activatable; ~8k chars stays
+# comfortably under the model's token budget while capturing the text's gist. Single source
+# of truth shared by the worker, the tagging basis, and repair (DRY).
+EMBED_INPUT_MAX_CHARS = 8_000
+
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 
 

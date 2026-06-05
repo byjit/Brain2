@@ -24,12 +24,12 @@ from brain2.services.providers.factory import build_providers, build_tagging_pro
 from brain2.db.connection import open_user_db
 from brain2.services.fts import index_entry
 from brain2.services.note_resolver import resolve_basis, resolve_note
-from brain2.services.providers.embedder import Embedder
+from brain2.services.providers.embedder import EMBED_INPUT_MAX_CHARS, Embedder
 from brain2.services.providers.page_fetcher import PageFetcher
 from brain2.services.providers.summarizer import Summarizer
 from brain2.services.providers.tagger import Tagger
 from brain2.services.structured_tags import StructuredTagSource
-from brain2.services.tagging import apply_tags
+from brain2.services.tagging import apply_tags, reconcile_tags
 from brain2.services.vector import index_entry_vector
 
 logger = logging.getLogger(__name__)
@@ -43,15 +43,6 @@ _CLAIMABLE = ("pending", "failed")
 # that crashed mid-pipeline; it is reset to ``pending`` on startup so it is reprocessed
 # instead of becoming a silent black hole (spec §7.4).
 _STALE_PROCESSING_LEASE_SECONDS = 600
-
-# Upper bound on characters sent to the embedder. The embedding API has an input token
-# limit, so a very large note (tens of KB) would fail to embed on every attempt and turn
-# an otherwise-valid entry into a permanent failure. We embed a bounded prefix instead so
-# the entry still gets a (representative) semantic vector and stays activatable; FTS still
-# indexes the full content (spec §7.4 no silent black hole). ~8k chars stays comfortably
-# under the model's token budget while capturing the note's gist.
-_EMBED_INPUT_MAX_CHARS = 8_000
-
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -160,7 +151,7 @@ def process_entry(
             # Bound the embedder input so an oversized note cannot fail every attempt and
             # block activation; FTS above already indexed the full content.
             index_entry_vector(
-                conn, entry_id, embedder.embed(note[:_EMBED_INPUT_MAX_CHARS])
+                conn, entry_id, embedder.embed(note[:EMBED_INPUT_MAX_CHARS])
             )
         conn.commit()
         return True
@@ -186,6 +177,16 @@ def _enrich_with_tags(
     """
     settings = get_settings()
     basis = resolve_basis(row, fetcher=fetcher)
+    # Snapshot any agent-supplied edges (applied synchronously at save, spec §10) BEFORE
+    # auto-tagging: apply_tags reconciles the entry to exactly the LLM-proposed set, which
+    # would otherwise silently wipe these. We re-merge them additively after so "agent tag
+    # merges are additive" (spec §10) holds across the async pass.
+    preexisting = [
+        r[0]
+        for r in conn.execute(
+            "SELECT tag FROM entry_tags WHERE entry_id = ?", (row["id"],)
+        )
+    ]
     note = apply_tags(
         conn,
         row["id"],
@@ -200,6 +201,13 @@ def _enrich_with_tags(
         url=row.get("url"),
         page=basis.page,
     )
+    # Restore the agent tags additively (already canonical, so reconcile_tags only ADDS them
+    # and bumps their counters for the newly-restored edges).
+    if preexisting:
+        auto = [r[0] for r in conn.execute(
+            "SELECT tag FROM entry_tags WHERE entry_id = ?", (row["id"],)
+        )]
+        reconcile_tags(conn, row["id"], auto + preexisting)
     # On the summarize path the note comes from the single call; otherwise it is the
     # verbatim basis note already resolved.
     return (note if basis.needs_summary else basis.note), basis.note_source

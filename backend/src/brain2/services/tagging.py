@@ -21,19 +21,19 @@ and not duplicated elsewhere (DRY).
 """
 
 import sqlite3
-from itertools import combinations
 
 from brain2.services.canonicalize import TagCandidate, canonicalize_candidates
 from brain2.services.fts import index_entry
-from brain2.services.providers.embedder import Embedder
+from brain2.services.providers.embedder import EMBED_INPUT_MAX_CHARS, Embedder
 from brain2.services.providers.page_fetcher import PageContent
 from brain2.services.providers.tagger import Tagger, TagRequest
 from brain2.services.structured_tags import StructuredTagSource
+from brain2.services.tag_counters import apply_edge_diff
 from brain2.services.tags_vector import nearest_tags
 
-# Bound on basis text sent to the embedder/tagger, mirroring the worker's embed cap so an
+# Bound on basis text sent to the embedder/tagger: the shared embedder input cap, so an
 # oversized basis cannot fail every attempt (the model has an input token budget).
-_BASIS_MAX_CHARS = 8_000
+_BASIS_MAX_CHARS = EMBED_INPUT_MAX_CHARS
 
 
 def apply_tags(
@@ -92,37 +92,84 @@ def apply_tags(
     return proposal.note if needs_summary else ""
 
 
-def _persist_tags(conn: sqlite3.Connection, entry_id: str, tags: list[str]) -> None:
-    """Write edges, bump counts + co-occurrence, and refresh tags_text (spec §7.1 step 9).
+def apply_agent_tags(
+    conn: sqlite3.Connection,
+    entry_id: str,
+    raw_tags: list[str],
+    *,
+    embedder: Embedder,
+    threshold: float,
+    max_tags: int,
+    descriptions: dict[str, str] | None = None,
+) -> None:
+    """Canonicalize agent-supplied tags and merge them ADDITIVELY (spec §10 save). Caller commits.
 
-    Counters are structured so a symmetric DECREMENT (M6 delete) is trivial: each edge
-    bumps ``tags.count`` by 1, and each unordered tag-pair (stored ``tag_a < tag_b`` so
-    (a,b) and (b,a) never split) bumps ``tag_cooccurrence.count`` by 1. Counters are only
-    bumped for NEWLY-inserted edges, so re-processing an already-tagged entry (spec §7.4
-    repair) cannot inflate counts above the live edge count and they stay safe to decrement.
+    Agent tags skip the LLM proposal step (§7.2 mechanism 2) but still go through
+    canonicalize-on-write (mechanism 3) so they cannot fragment the vocabulary: each raw
+    name is normalized, then snapped to a near-duplicate existing tag (cosine >= threshold)
+    or created with a stable description. The result is UNIONed with the entry's current
+    edges (never replacing them, spec §10 "tag merges are additive") and reconciled, so
+    counters/co-occurrence/tags_text update for exactly the newly-added edges. ``descriptions``
+    optionally supplies a concept description per raw name; otherwise canonicalize falls back
+    to the name as its own minimal description.
     """
-    new_tags = [
-        tag
-        for tag in tags
-        if conn.execute(
-            "INSERT OR IGNORE INTO entry_tags (entry_id, tag) VALUES (?, ?)", (entry_id, tag)
-        ).rowcount
-        > 0
+    descriptions = descriptions or {}
+    candidates = [
+        TagCandidate(name=name, description=descriptions.get(name, ""))
+        for name in raw_tags
     ]
-    for tag in new_tags:
-        conn.execute("UPDATE tags SET count = count + 1 WHERE name = ?", (tag,))
+    canonical = canonicalize_candidates(
+        conn, candidates, embedder=embedder, threshold=threshold, max_tags=max_tags
+    )
+    current = [
+        r[0]
+        for r in conn.execute("SELECT tag FROM entry_tags WHERE entry_id = ?", (entry_id,))
+    ]
+    # Additive merge: keep all existing edges, add the canonicalized agent tags.
+    reconcile_tags(conn, entry_id, current + canonical)
 
-    for tag_a, tag_b in combinations(sorted(new_tags), 2):  # canonical order, no (b,a) dup
-        conn.execute(
-            """
-            INSERT INTO tag_cooccurrence (tag_a, tag_b, count) VALUES (?, ?, 1)
-            ON CONFLICT(tag_a, tag_b) DO UPDATE SET count = count + 1
-            """,
-            (tag_a, tag_b),
+
+def reconcile_tags(conn: sqlite3.Connection, entry_id: str, final_tags: list[str]) -> None:
+    """Reconcile an entry's edges to exactly ``final_tags`` (spec §7.4 re-tag, §9.2).
+
+    The single owner of edge writes shared by first-tag and re-tag (worker reprocess /
+    repair). It diffs the entry's CURRENT edges against ``final_tags`` and:
+      - REMOVES dropped edges, decrementing ``tags.count`` + ``tag_cooccurrence`` for them;
+      - ADDS new edges, incrementing the same counters.
+    Counters therefore always equal the live edge set, so they stay safe to decrement and
+    a partial-overlap re-tag (the case M5 deferred) is handled correctly. The increment and
+    decrement use the symmetric helpers (canonical pair order, floor at 0) so the math is a
+    true mirror. Re-tagging with the SAME set is a no-op for counters (no double-bump).
+    Finally refreshes the denormalized ``entries_fts.tags_text`` so BM25 matches tags.
+    Caller commits.
+    """
+    current = {
+        r[0] for r in conn.execute(
+            "SELECT tag FROM entry_tags WHERE entry_id = ?", (entry_id,)
         )
+    }
+    desired = list(dict.fromkeys(final_tags))  # de-dup, preserve order
+    desired_set = set(desired)
+
+    removed = sorted(current - desired_set)
+    added = [t for t in desired if t not in current]
+    kept = sorted(current & desired_set)
+
+    for tag in removed:
+        conn.execute("DELETE FROM entry_tags WHERE entry_id = ? AND tag = ?", (entry_id, tag))
+    for tag in added:
+        conn.execute("INSERT INTO entry_tags (entry_id, tag) VALUES (?, ?)", (entry_id, tag))
+    # Counter delta over the partial overlap: added×{added,kept} pairs rise, removed×
+    # {removed,kept} pairs fall — so counters always equal the live edge set (spec §7.4/§9.2).
+    apply_edge_diff(conn, added=added, removed=removed, kept=kept)
 
     # Denormalize the final tags into entries_fts so a tag keyword matches via BM25.
     row = conn.execute(
         "SELECT title, content FROM entries WHERE id = ?", (entry_id,)
     ).fetchone()
     index_entry(conn, entry_id, row["title"], row["content"])
+
+
+def _persist_tags(conn: sqlite3.Connection, entry_id: str, tags: list[str]) -> None:
+    """Persist the entry's final tag set via :func:`reconcile_tags` (spec §7.1 step 9)."""
+    reconcile_tags(conn, entry_id, tags)

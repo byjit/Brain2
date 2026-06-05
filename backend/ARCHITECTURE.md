@@ -28,12 +28,15 @@ backend/
 │   │   ├── prefilter.py      # shared tag/type pre-filter id-set helpers (spec §11)
 │   │   ├── vector.py         # entries_vec upsert/remove + sqlite-vec KNN (spec §9.2/§11)
 │   │   ├── search.py         # hybrid BM25+vector RRF retrieval + BM25-only (spec §11)
-│   │   ├── entries.py        # save_entry + delete_entry: sync upsert pipeline (spec §7.1)
+│   │   ├── entries.py        # save_entry + delete_entry + failed_entries (spec §7.1/§7.4/§10)
 │   │   ├── note_resolver.py  # note-source ladder body→og→title; resolve_basis (no-LLM) (spec §7.3)
 │   │   ├── structured_tags.py # structured-source priors: OG keywords + GitHub topics/lang (spec §7.2)
 │   │   ├── tags_vector.py    # tags_vec upsert + nearest-tag KNN (description embeddings) (spec §9.2/§9.3)
+│   │   ├── tag_counters.py   # symmetric tags.count + tag_cooccurrence math (apply_edge_diff) (spec §9.2)
 │   │   ├── canonicalize.py   # conservative normalize + snap-to-existing-or-create (spec §7.2)
-│   │   ├── tagging.py        # auto-tag orchestration: priors→nearest→1 call→canon→persist (spec §7.2)
+│   │   ├── tagging.py        # auto-tag orchestration + reconcile_tags + apply_agent_tags (spec §7.2/§7.4/§10)
+│   │   ├── tags_service.py   # get_tags read model: paged counts/descriptions/co-occurrence (spec §10)
+│   │   ├── repair.py         # PATCH repair: re-enrich a failed entry from the user note (spec §7.4)
 │   │   ├── worker.py         # async enrichment worker + drain + lifespan loop (spec §7.1/§7.4)
 │   │   └── providers/        # external-service interfaces (DI) + fakes (spec §7)
 │   │       ├── summarizer.py    # Summarizer Protocol; GeminiSummarizer + FakeSummarizer
@@ -43,10 +46,10 @@ backend/
 │   │       └── factory.py       # build_providers + build_tagging_providers: real-vs-fake by config
 │   ├── mcp/
 │   │   ├── auth.py           # Bearer -> user_id resolution + per-request user ContextVar
-│   │   ├── tools.py          # transport-free save/retrieve tool logic (reuses services)
-│   │   └── server.py         # FastMCP server (streamable HTTP) exposing save/retrieve
+│   │   ├── tools.py          # transport-free save/retrieve/delete/get_tags tool logic (reuses services)
+│   │   └── server.py         # FastMCP server (streamable HTTP) exposing all four spec §10 tools
 │   └── api/
-│       └── entries.py        # POST /entries router
+│       └── entries.py        # POST /entries + GET /entries/failed + PATCH /entries/{id} repair
 └── tests/                    # pytest; conftest wires a TestClient to a tmp DATA_DIR
 ```
 
@@ -130,7 +133,38 @@ backend/
     the page/clip content-persistence rule, so an agent-supplied note survives and shows in
     retrieve.
   - `entries.delete_entry` — removes the entry (cascading `entry_tags`), its FTS row, and
-    its `entries_vec` note vector (spec §10 delete).
+    its `entries_vec` note vector, then SYMMETRICALLY decrements `tags.count` +
+    `tag_cooccurrence` for the removed edge set via `tag_counters.decrement_for_tags` — the
+    exact inverse of the M5 write (same canonical pair order, floor at 0). A tag at count 0
+    is LEFT in place (its description + `tags_vec` vector stay useful for canonicalization,
+    spec §9.2). Returns False for an absent id so `delete` can answer `{deleted:false}`.
+    `entries.failed_entries` is the read for the §7.4 "needs attention" surface (failed rows
+    newest-first, scoped to the user's DB).
+  - `tag_counters` — the single owner of count math (spec §9.2). `apply_edge_diff(added,
+    removed, kept)` applies the exact counter delta for a partial re-tag: `tags.count` ±1
+    per added/removed tag, and `tag_cooccurrence` ± for every pair that becomes/stops being
+    co-present (added×{added,kept} rise, removed×{removed,kept} fall), all in canonical
+    `tag_a<tag_b` order and floored at 0. `decrement_for_tags` is the whole-edge-set inverse
+    used by delete. Keeping increment and decrement here guarantees they mirror exactly.
+  - `tagging.reconcile_tags` — the single owner of edge writes shared by first-tag, worker
+    reprocess, and repair. Diffs the entry's current edges against the desired set and
+    routes the add/remove/keep split through `apply_edge_diff`, so counters always equal the
+    live edge set (closing the partial-overlap case M5 deferred), then refreshes
+    `entries_fts.tags_text`. `_persist_tags` is a thin wrapper over it.
+  - `tagging.apply_agent_tags` — canonicalize-on-write for agent-supplied `save` tags
+    (spec §10): normalize → snap-or-create (reusing `canonicalize_candidates`) → UNION with
+    the entry's current edges → `reconcile_tags`. Agent tags skip the LLM proposal but still
+    canonicalize, so they cannot fragment the vocabulary; the merge is additive.
+  - `tags_service.list_tags` — the `get_tags` read model (spec §10): paged (`limit` default
+    50) tags with `name`/`description`/`count` and `co_occurs_with` (top co-occurring names,
+    both pair directions, zero-count pairs excluded). `sort` is `count` (default desc) or
+    `name` (asc); no other knobs (YAGNI).
+  - `repair.repair_entry` — the §7.4 PATCH flow. Sets note=user text, note_source='user',
+    clears `error_message`, resets `attempts`/`next_retry_at`, then re-enters the SAME
+    enrichment path the worker uses (`tagging.apply_tags`) with the basis forced to the
+    user's note and `needs_summary=False` (no LLM note rewrite — the user's text IS the
+    note), applies optional user tags additively, embeds the note into `entries_vec`, and
+    flips to `active`. Returns the updated row (None for an absent id → 404).
   - `providers/` — external services behind abstractions (dependency inversion) so the
     worker is unit-testable offline (spec §7). `summarizer.Summarizer` (2-3 sentence note;
     real `GeminiSummarizer` uses the **google-genai** SDK + Gemini Flash, fake is
@@ -231,17 +265,19 @@ backend/
     M2 stub: any well-formed token resolves to `settings.dev_user_id` (real API-key/JWT
     validation is M7), so per-user DB routing already flows through MCP. `user_scope` /
     `current_user_id` bind the resolved user in a `ContextVar` for the request.
-  - `tools.save_tool` / `tools.retrieve_tool` — transport-free tool logic. They resolve
-    the current user, open that user's DB, and **delegate to the shared `save_entry` /
-    `hybrid_search`** so REST and MCP have one implementation (DRY). `retrieve_tool` is the
-    public hybrid path (BM25 + vector + RRF); it builds the embedder from config (real
-    Gemini when keyed, else fake). Per spec §10 `save` treats `note` as authored text: for
-    `type=note` it is the user's note (its only copy → `captured_text`); for URL-backed
-    types it is the override that skips summarization (→ the `note` column, reflected back
-    in retrieve). Auto-tagging now runs in the worker (M5); canonicalizing
-    agent-supplied `tags` from the `save` tool is a later milestone.
-  - `server.build_mcp_server` — FastMCP server `brain2_mcp` exposing `save`
-    (destructive/idempotent upsert, openWorld) and `retrieve` (readOnly). Flat, typed tool
+  - `tools.{save,retrieve,delete,get_tags}_tool` — transport-free tool logic. They resolve
+    the current user, open that user's DB, and **delegate to the shared services** so REST
+    and MCP have one implementation (DRY): `save_tool`→`save_entry` (+ `apply_agent_tags`
+    when `tags` are given), `retrieve_tool`→`hybrid_search`, `delete_tool`→`delete_entry`,
+    `get_tags_tool`→`tags_service.list_tags`. Per spec §10 `save` treats `note` as authored
+    text: for `type=note` it is the user's note (its only copy → `captured_text`); for
+    URL-backed types it is the override that skips summarization. Optional `save` `tags` are
+    agent-supplied: canonicalized + merged additively (so the agent cannot fragment the
+    vocabulary), while automatic worker tagging still runs.
+  - `server.build_mcp_server` — FastMCP server `brain2_mcp` exposing all four spec §10
+    tools: `save` (destructive/idempotent upsert), `retrieve` (readOnly), `delete`
+    (readOnly=false, destructive, idempotent — removes the entry + derived data and
+    decrements counters), and `get_tags` (readOnly, paged landscape). Flat, typed tool
     parameters (clean `inputSchema`) and typed returns (structured output). Each tool reads
     the request's Bearer header, resolves the user, and runs inside `auth.user_scope`.
 
@@ -249,10 +285,16 @@ backend/
   (type-aware: URL required for URL-backed types, text required for notes; carries a
   distinct `note` override field per spec §10; string fields bounded via `max_length` —
   short fields 2 KB, body fields ~256 KB — so an oversized input yields 422 instead of a
-  silently persisted/indexed blob), `SaveEntryResponse`, and the `EntryType` / `SaveStatus`
-  enums.
+  silently persisted/indexed blob), `SaveEntryResponse`, the §7.4 repair models
+  (`RepairEntryRequest` with a required note + optional tags, `EntryResponse` for the
+  repaired entry), the failed-entry surface models (`FailedEntry` + `FailedEntriesResponse`
+  with a `total`), and the `EntryType` / `SaveStatus` enums.
 
-- **api/entries.py + main.py** — `POST /entries` returns `201 {id, status}`. The app
+- **api/entries.py + main.py** — `POST /entries` returns `201 {id, status}`. `GET
+  /entries/failed` returns the §7.4 "needs attention" surface (`{total, entries}`), and is
+  registered BEFORE the parameterized route so the literal path is not captured as an id.
+  `PATCH /entries/{id}` is the §7.4 repair flow (`repair.repair_entry`; providers wired from
+  config; 404 for an absent id). The app
   factory adds a `/health` probe, includes routers, and mounts the MCP server's
   streamable-HTTP ASGI app at `/mcp` (tools reachable at `/mcp/mcp`). The FastAPI lifespan
   runs the MCP `session_manager` and (when `enable_worker=True`, the default) launches the
@@ -304,8 +346,22 @@ it. Auth is a Bearer-token check today (M2 stub → dev user); full OAuth 2.1 + 
   into that single call on the summarize path; the verbatim short-circuits (note / short clip /
   og / title) set the note directly. The 0.90 threshold + 3-5 cap bias to under-merge and to
   reuse over invention (spec §7.2). `tag_aliases` ships in the schema but the reversible-merge
-  job is v2/M6; delete-side counter decrements are M6 (counters are structured for a trivial
-  symmetric decrement).
+  job is v2.
+- **Delete + counters (M6).** `delete` removes the entry + all derived data (FTS, vector,
+  edges) and SYMMETRICALLY decrements `tags.count` + `tag_cooccurrence` via
+  `tag_counters` — the exact inverse of the write (canonical pair order, floor at 0). A tag
+  at count 0 is left in place (spec §9.2). All edge writes (first-tag, reprocess, repair,
+  agent tags) funnel through `tagging.reconcile_tags`, which diffs current↔desired and
+  applies the precise partial-overlap counter delta (`apply_edge_diff`), so counts always
+  equal the live edge set.
+- **Repair (M6, spec §7.4).** `PATCH /entries/{id}` (`repair.repair_entry`) recovers a
+  failed/active entry from a user note: note_source='user', clears error/attempts, then
+  re-enters the SAME worker enrichment path with the basis forced to the user's note and no
+  summarization, re-tags + re-indexes, and flips to `active`. `GET /entries/failed` is the
+  read-only "needs attention" surface for M7/M8.
+- **Agent tags (M6, spec §10).** The `save` tool's optional `tags` skip the LLM proposal but
+  still go through canonicalize-on-write (`tagging.apply_agent_tags`) and merge additively,
+  so an agent cannot fragment the vocabulary.
 - **Hybrid retrieval (M4).** `retrieve` fuses BM25 (set A) and vector KNN over the note
   embedding (set B) with RRF (`k=60`). Tag/type are pre-filters on both legs (`prefilter`).
   `search.search_entries` stays as the internal BM25-only path; `search.hybrid_search` is

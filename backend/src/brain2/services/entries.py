@@ -14,6 +14,7 @@ from brain2.models.entries import CreateEntryRequest, EntryType, SaveEntryRespon
 from brain2.services.content import persisted_content
 from brain2.services.fts import index_entry, remove_entry
 from brain2.services.providers.embedder import Embedder
+from brain2.services.tag_counters import decrement_for_tags
 from brain2.services.url_normalize import normalize_url
 from brain2.services.vector import index_entry_vector, remove_entry_vector
 
@@ -183,15 +184,45 @@ def _update_existing(
     return SaveEntryResponse(id=existing_id, status=SaveStatus.UPDATED)
 
 
-def delete_entry(conn: sqlite3.Connection, entry_id: str) -> bool:
-    """Delete an entry and its derived FTS row + note vector (spec §10 delete).
+def failed_entries(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Return the user's failed entries for the 'needs attention' surface (spec §7.4).
 
-    Returns True if a row was removed. ``entry_tags`` rows cascade via the schema
-    FK; tag-count cleanup arrives with auto-tagging in M5.
+    Read-only. Scoped to the current user's DB (the caller opens it). Newest first so the
+    dashboard/badge shows the most recent failures at the top. Only the §7.4 repair fields
+    are needed downstream, but returning the rows keeps the model mapping in one place.
     """
+    return conn.execute(
+        """
+        SELECT id, url, title, note, error_message, updated_at
+          FROM entries WHERE status = 'failed'
+         ORDER BY updated_at DESC
+        """
+    ).fetchall()
+
+
+def delete_entry(conn: sqlite3.Connection, entry_id: str) -> bool:
+    """Delete an entry and ALL its derived data (spec §10 delete, §9.2 counters).
+
+    Removes the entry (cascading its ``entry_tags`` edges), its ``entries_fts`` row, and
+    its ``entries_vec`` note vector, then SYMMETRICALLY decrements ``tags.count`` and
+    ``tag_cooccurrence.count`` for the removed edge set — the exact inverse of M5's write
+    (canonical pair order, floor at 0). A tag whose count hits 0 is LEFT in place: its
+    description + ``tags_vec`` embedding stay useful for canonicalization (spec §9.2).
+    Returns True if a row was removed, False when the id is absent (so the tool can return
+    ``deleted: false`` idempotently).
+    """
+    # Snapshot the edge set BEFORE the cascade so we know exactly which counters to undo.
+    tags = [
+        r[0]
+        for r in conn.execute(
+            "SELECT tag FROM entry_tags WHERE entry_id = ?", (entry_id,)
+        )
+    ]
     cursor = conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
     if cursor.rowcount == 0:
+        conn.rollback()  # nothing existed; release the implicit transaction
         return False
+    decrement_for_tags(conn, tags)  # the edges themselves cascaded via the FK
     remove_entry(conn, entry_id)
     remove_entry_vector(conn, entry_id)
     conn.commit()

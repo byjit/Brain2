@@ -10,9 +10,11 @@ from brain2.config import get_settings
 from brain2.db.connection import open_user_db
 from brain2.mcp import auth
 from brain2.models.entries import CreateEntryRequest
-from brain2.services.entries import save_entry
+from brain2.services.entries import delete_entry, save_entry
 from brain2.services.providers.factory import build_providers
 from brain2.services.search import hybrid_search
+from brain2.services.tagging import apply_agent_tags
+from brain2.services.tags_service import list_tags
 
 
 def _open_current_user_db():
@@ -27,6 +29,7 @@ def save_tool(
     url: str | None = None,
     title: str | None = None,
     note: str | None = None,
+    tags: list[str] | None = None,
     source_url: str | None = None,
 ) -> dict:
     """Upsert an entry for the current user; returns ``{id, status}`` (spec §10 save).
@@ -35,7 +38,12 @@ def save_tool(
     the MCP ``note`` field is the authored text: for ``type=note`` it is the user's note
     (its only persisted copy, so it flows to captured_text); for URL-backed types it is
     the note override that skips LLM summarization (it flows to the note column and is
-    reflected back in retrieve). Agent-supplied tags are deferred to M5.
+    reflected back in retrieve).
+
+    Optional ``tags`` are agent-supplied (spec §10): they skip the LLM proposal step but
+    are still normalized + canonicalized (snap-to-near-duplicate or create) and merged
+    ADDITIVELY into the entry's tags, so an agent cannot fragment the vocabulary. Automatic
+    background tagging (the worker) still runs for the rest.
     """
     is_note_type = type == "note"
     req = CreateEntryRequest(
@@ -49,9 +57,21 @@ def save_tool(
     # Supply the embedder so a re-save of an existing URL with a changed note override
     # refreshes the note vector in lockstep with FTS (spec §7.1). Wired from config
     # (real Gemini when keyed, else the offline fake).
-    _, _, embedder = build_providers(get_settings())
+    settings = get_settings()
+    _, _, embedder = build_providers(settings)
     with _open_current_user_db() as conn:
         result = save_entry(conn, req, embedder=embedder)
+        if tags:
+            # Canonicalize-on-write so agent tags cannot fragment the vocabulary (spec §10).
+            apply_agent_tags(
+                conn,
+                result.id,
+                tags,
+                embedder=embedder,
+                threshold=settings.canonicalize_threshold,
+                max_tags=settings.tags_per_entry_max,
+            )
+            conn.commit()
     return {"id": result.id, "status": result.status.value}
 
 
@@ -76,3 +96,24 @@ def retrieve_tool(
     _, _, embedder = build_providers(get_settings())
     with _open_current_user_db() as conn:
         return hybrid_search(conn, query, embedder=embedder, tags=tags, type=type, limit=limit)
+
+
+def delete_tool(*, id: str) -> dict:
+    """Delete an entry + all its derived data for the current user (spec §10 delete).
+
+    Removes the entry, its FTS row, its note vector and its tag edges, and symmetrically
+    decrements tag counts + co-occurrence. Returns ``{deleted: true}`` when a row was
+    removed, ``{deleted: false}`` when the id was absent (idempotent).
+    """
+    with _open_current_user_db() as conn:
+        return {"deleted": delete_entry(conn, id)}
+
+
+def get_tags_tool(*, limit: int = 50, sort: str = "count") -> list[dict]:
+    """List the user's tags with counts, descriptions, and co-occurrence (spec §10 get_tags).
+
+    Paged: ``limit`` (default 50) and ``sort`` ('count' default desc, or 'name' asc).
+    Returns ``{tag, description, count, co_occurs_with}`` items in the §10 shape.
+    """
+    with _open_current_user_db() as conn:
+        return list_tags(conn, limit=limit, sort=sort)

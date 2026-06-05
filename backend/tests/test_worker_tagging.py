@@ -98,6 +98,36 @@ def test_page_meta_keywords_seed_priors_end_to_end(conn):
     assert edges == {"python", "fastapi"}
 
 
+def test_worker_autotag_preserves_preexisting_agent_tags(conn):
+    """Spec §10: agent-supplied tags merge additively and must survive auto-tagging.
+
+    A `save` with explicit tags applies them synchronously to the still-`pending` entry;
+    when the background worker later runs auto-tagging it must UNION its proposed tags with
+    the entry's current edges, not reconcile to only the LLM set (which would silently wipe
+    the agent tag).
+    """
+    _insert(conn, id="e1", type="page", url="https://x.test/a")
+    # Simulate the synchronous agent-tag write that save_tool performs before the worker runs.
+    conn.execute(
+        "INSERT INTO tags (name, description, count) VALUES ('myspecialtag', 'agent tag', 1)"
+    )
+    conn.execute("INSERT INTO entry_tags (entry_id, tag) VALUES ('e1', 'myspecialtag')")
+    conn.commit()
+
+    fetcher = FakePageFetcher(default=PageContent(body_text="Body about python web " * 50))
+    tagger = FakeTagger(
+        result=TagProposal(note="A page.", tags=["autotag"],
+                            new_tag_descriptions={"autotag": "An automatic tag"})
+    )
+    process_entry(
+        conn, "e1", fetcher=fetcher, summarizer=FakeSummarizer(), embedder=FakeEmbedder(),
+        tagger=tagger, structured_source=FakeStructuredTagSource(),
+    )
+
+    edges = {r[0] for r in conn.execute("SELECT tag FROM entry_tags WHERE entry_id='e1'")}
+    assert edges == {"myspecialtag", "autotag"}  # agent tag preserved alongside the auto-tag
+
+
 def test_short_clip_verbatim_note_still_tags_with_one_call(conn):
     _insert(conn, id="c1", type="clip", content="useEffect hook cleanup")
     tagger = FakeTagger(

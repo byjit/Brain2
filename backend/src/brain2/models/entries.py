@@ -81,3 +81,53 @@ class SaveEntryResponse(BaseModel):
 
     id: str = Field(description="Entry id (nanoid)")
     status: SaveStatus = Field(description="'saved' for a new entry, 'updated' for an existing URL")
+
+
+class RepairEntryRequest(BaseModel):
+    """Body for PATCH /entries/{id} repair (spec §7.4).
+
+    The user fills the note (and optionally tags) to recover a failed entry. On submit the
+    entry re-enters processing using this note as the basis.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    note: str = Field(min_length=1, max_length=_MAX_BODY, description="User-authored note; the new processing basis")
+    tags: list[str] | None = Field(
+        default=None, description="Optional user-supplied tags; canonicalized + merged additively"
+    )
+
+
+class EntryResponse(BaseModel):
+    """The full entry returned by PATCH repair (spec §7.4)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    url: str | None = None
+    title: str | None = None
+    note: str | None = None
+    note_source: str
+    type: str
+    status: str
+    saved_at: str
+    updated_at: str
+    error_message: str | None = None
+
+
+class FailedEntry(BaseModel):
+    """One failed entry in the 'needs attention' surface (spec §7.4)."""
+
+    id: str
+    url: str | None = None
+    title: str | None = None
+    note: str | None = None
+    error_message: str | None = None
+    updated_at: str
+
+
+class FailedEntriesResponse(BaseModel):
+    """The failed-entry surface for the §7.4 'needs attention' badge/dashboard."""
+
+    total: int = Field(description="Total failed entries for the current user")
+    entries: list[FailedEntry]

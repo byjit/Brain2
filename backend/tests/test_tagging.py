@@ -160,6 +160,48 @@ def test_reprocessing_same_entry_does_not_inflate_counts(conn):
     assert conn.execute("SELECT count FROM tag_cooccurrence").fetchone()[0] == 1
 
 
+def test_retag_partial_overlap_reconciles_counters(conn):
+    """Spec §7.4/§9.2: re-tagging with a partially-overlapping set reconciles edges.
+
+    Dropped tags decrement (count + co-occurrence); new tags increment; kept tags are
+    untouched — so counters always equal the live edge set (the case M5 deferred).
+    """
+    _insert_entry(conn, "e1", note="x")
+    embedder = FakeEmbedder()
+    descs = {t: f"Concept {t}" for t in ("rust", "http", "cli", "wasm")}
+
+    # First tag set: rust, http, cli.
+    apply_tags(
+        conn, "e1", basis_text="x", needs_summary=False, source=FakeStructuredTagSource(),
+        tagger=FakeTagger(result=TagProposal(note="", tags=["rust", "http", "cli"],
+                                             new_tag_descriptions=descs)),
+        embedder=embedder, threshold=0.90, max_tags=5, nearest_limit=10,
+    )
+    # Re-tag set: rust, http, wasm (drops cli, keeps rust+http, adds wasm).
+    apply_tags(
+        conn, "e1", basis_text="x", needs_summary=False, source=FakeStructuredTagSource(),
+        tagger=FakeTagger(result=TagProposal(note="", tags=["rust", "http", "wasm"],
+                                             new_tag_descriptions=descs)),
+        embedder=embedder, threshold=0.90, max_tags=5, nearest_limit=10,
+    )
+
+    edges = {r[0] for r in conn.execute("SELECT tag FROM entry_tags WHERE entry_id='e1'")}
+    assert edges == {"rust", "http", "wasm"}
+    # cli edge dropped -> count back to 0; the others stay at 1.
+    assert conn.execute("SELECT count FROM tags WHERE name='cli'").fetchone()[0] == 0
+    for tag in ("rust", "http", "wasm"):
+        assert conn.execute("SELECT count FROM tags WHERE name=?", (tag,)).fetchone()[0] == 1
+    # Co-occurrence equals the live pairs: (http,rust),(http,wasm),(rust,wasm) at 1; any
+    # pair involving cli is decremented to 0.
+    live = {(r[0], r[1]): r[2] for r in conn.execute(
+        "SELECT tag_a, tag_b, count FROM tag_cooccurrence")}
+    assert live.get(("http", "rust")) == 1
+    assert live.get(("http", "wasm")) == 1
+    assert live.get(("rust", "wasm")) == 1
+    assert live.get(("cli", "http"), 0) == 0
+    assert live.get(("cli", "rust"), 0) == 0
+
+
 def test_summary_note_written_when_needed(conn):
     _insert_entry(conn, "e1", type="page", url="https://x.test", note="")
     embedder = FakeEmbedder()

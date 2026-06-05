@@ -13,7 +13,7 @@ flat, agent-friendly ``inputSchema`` matching the spec §10 contract; outputs ar
 Pydantic/list returns so FastMCP emits structured output.
 """
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -44,6 +44,23 @@ class RetrieveResult(BaseModel):
     type: str
     saved_at: str
     score: float
+
+
+class DeleteOutput(BaseModel):
+    """Result of a delete (spec §10 delete)."""
+
+    deleted: bool = Field(description="True if the entry existed and was removed, else False")
+
+
+class TagInfo(BaseModel):
+    """One tag in the landscape (spec §10 get_tags result shape)."""
+
+    tag: str
+    description: str
+    count: int
+    co_occurs_with: list[str] = Field(
+        description="Top co-occurring tag names, ordered by co-occurrence count"
+    )
 
 
 def _resolve_user(ctx: Context) -> str:
@@ -88,13 +105,19 @@ def build_mcp_server(transport_security: TransportSecuritySettings | None = None
             str | None,
             Field(description="For type=note this is the user's note text (required); for URL-backed types, an optional captured body"),
         ] = None,
+        tags: Annotated[
+            list[str] | None,
+            Field(description="Optional tags; normalized + canonicalized and merged additively (auto-tagging still runs)"),
+        ] = None,
         source_url: Annotated[str | None, Field(description="For clips: the page the selection came from")] = None,
     ) -> SaveOutput:
         """Save (upsert) a memory into the user's Brain2 store.
 
         Deduplicates URL-backed entries by normalized URL: a new URL inserts a pending
         entry; a known URL updates it (omitted fields are preserved). type=note has no
-        URL and never dedups; its ``note`` is the text the user wrote.
+        URL and never dedups; its ``note`` is the text the user wrote. Optional ``tags``
+        are canonicalized before write and merged additively, so they cannot fragment the
+        tag vocabulary.
 
         Returns:
             SaveOutput: {id, status} where status is "saved" or "updated".
@@ -106,6 +129,7 @@ def build_mcp_server(transport_security: TransportSecuritySettings | None = None
                 url=url,
                 title=title,
                 note=note,
+                tags=tags,
                 source_url=source_url,
             )
         return SaveOutput(**result)
@@ -144,5 +168,64 @@ def build_mcp_server(transport_security: TransportSecuritySettings | None = None
                 limit=limit,
             )
         return [RetrieveResult(**hit) for hit in hits]
+
+    @mcp.tool(
+        name="delete",
+        annotations={
+            "title": "Delete from Brain2",
+            "readOnlyHint": False,
+            "destructiveHint": True,   # removes the entry and all its derived data
+            "idempotentHint": True,    # deleting an absent id is a safe no-op
+            "openWorldHint": True,
+        },
+    )
+    def delete(
+        ctx: Context,
+        id: Annotated[str, Field(description="Id of the entry to delete")],
+    ) -> DeleteOutput:
+        """Delete an entry and all its derived data from the user's Brain2 store.
+
+        Removes the entry, its search index, its note vector and its tag edges, and
+        decrements tag counts + co-occurrence. Idempotent: deleting an unknown id returns
+        ``deleted: false`` rather than erroring.
+
+        Returns:
+            DeleteOutput: {deleted} — true if removed, false if the id was absent.
+        """
+        user_id = _resolve_user(ctx)
+        with auth.user_scope(user_id):
+            result = tools.delete_tool(id=id)
+        return DeleteOutput(**result)
+
+    @mcp.tool(
+        name="get_tags",
+        annotations={
+            "title": "List Brain2 tags",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
+    def get_tags(
+        ctx: Context,
+        limit: Annotated[int, Field(ge=1, le=500, description="Maximum tags to return (default 50)")] = 50,
+        sort: Annotated[
+            Literal["count", "name"],
+            Field(description="'count' (default, descending) or 'name' (ascending)"),
+        ] = "count",
+    ) -> list[TagInfo]:
+        """List the user's tags with counts, descriptions, and co-occurrence (spec §10).
+
+        Lets an agent understand the tag landscape and pick tags to pre-filter ``retrieve``.
+        Paged by ``limit``; ``sort`` is 'count' (default, heaviest first) or 'name'.
+
+        Returns:
+            list[TagInfo]: {tag, description, count, co_occurs_with}.
+        """
+        user_id = _resolve_user(ctx)
+        with auth.user_scope(user_id):
+            rows = tools.get_tags_tool(limit=limit, sort=sort)
+        return [TagInfo(**row) for row in rows]
 
     return mcp

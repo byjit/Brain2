@@ -35,12 +35,21 @@ async def test_tools_are_registered_with_annotations():
     mcp = build_mcp_server()
     listed = await mcp.list_tools()
     by_name = {t.name: t for t in listed}
-    assert set(by_name) == {"save", "retrieve"}
+    # All four spec §10 tools are registered.
+    assert set(by_name) == {"save", "retrieve", "delete", "get_tags"}
     assert by_name["retrieve"].annotations.readOnlyHint is True
     assert by_name["save"].annotations.destructiveHint is True
+    # delete: destructive but idempotent and not read-only (spec M6).
+    assert by_name["delete"].annotations.readOnlyHint is False
+    assert by_name["delete"].annotations.destructiveHint is True
+    assert by_name["delete"].annotations.idempotentHint is True
+    # get_tags is read-only.
+    assert by_name["get_tags"].annotations.readOnlyHint is True
     # Inputs carry typed JSON schemas.
     assert "query" in by_name["retrieve"].inputSchema["properties"]
     assert "type" in by_name["save"].inputSchema["properties"]
+    assert "id" in by_name["delete"].inputSchema["properties"]
+    assert "sort" in by_name["get_tags"].inputSchema["properties"]
 
 
 @pytest.mark.anyio
@@ -66,6 +75,37 @@ async def test_save_then_retrieve_round_trip_over_http():
                 found = await session.call_tool("retrieve", {"query": "tokio"})
                 hits = found.structuredContent["result"]
                 assert any(h["id"] == entry_id for h in hits)
+
+
+@pytest.mark.anyio
+async def test_delete_and_get_tags_round_trip_over_http():
+    app = create_app(mcp_transport_security=_TEST_SECURITY)
+
+    async with app.router.lifespan_context(app):
+        http_client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            headers={"Authorization": "Bearer br2_live_test"},
+        )
+        async with streamable_http_client(MCP_URL, http_client=http_client) as (read, write, _):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+
+                # Save a note carrying agent tags, then list tags and delete it.
+                saved = await session.call_tool(
+                    "save",
+                    {"type": "note", "note": "tokio runtime trick", "tags": ["rust", "async"]},
+                )
+                entry_id = saved.structuredContent["id"]
+
+                tags = await session.call_tool("get_tags", {})
+                names = {t["tag"] for t in tags.structuredContent["result"]}
+                assert {"rust", "async"} <= names
+
+                deleted = await session.call_tool("delete", {"id": entry_id})
+                assert deleted.structuredContent["deleted"] is True
+                # Idempotent: deleting again returns false.
+                again = await session.call_tool("delete", {"id": entry_id})
+                assert again.structuredContent["deleted"] is False
 
 
 @pytest.fixture

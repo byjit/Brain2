@@ -47,7 +47,7 @@ def _offline_unless_key_in_environ(monkeypatch):
     _offline_get_settings.cache_clear = real_get_settings.cache_clear
     monkeypatch.setattr(config, "get_settings", _offline_get_settings)
     # Patch the already-imported references in modules that bound the name directly.
-    for module_name in ("brain2.services.worker", "brain2.mcp.tools"):
+    for module_name in ("brain2.services.worker", "brain2.mcp.tools", "brain2.api.entries"):
         import importlib
 
         try:

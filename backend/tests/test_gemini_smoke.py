@@ -97,3 +97,47 @@ def test_live_combined_tagger_call_returns_note_and_tags():
     for tag in result.tags:
         if tag not in existing:
             assert result.new_tag_descriptions.get(tag, "").strip()
+
+
+def test_live_repair_retags_via_real_pipeline(tmp_path):
+    """Repair re-enriches a failed entry from the user note via the REAL M5 pipeline
+    (spec §7.4): real embedder + real combined tagger, grounded in the user's text."""
+    settings = get_settings()
+    embedder = _live_embedder()
+    tagger = GeminiTagger(
+        api_key=settings.gemini_api_key,
+        model=settings.gemini_summary_model,
+        min_tags=settings.tags_per_entry_min,
+        max_tags=settings.tags_per_entry_max,
+    )
+    from brain2.services.repair import repair_entry
+    from brain2.services.structured_tags import HttpxStructuredTagSource
+
+    with open_user_db("live-repair-user", data_dir=tmp_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO entries (id, url, original_url, note, note_source, type, saved_at,
+                                 updated_at, status, attempts, error_message)
+            VALUES ('e1', 'https://x.test/blocked', 'https://x.test/blocked', NULL, 'body',
+                    'page', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'failed', 3,
+                    'no extractable content')
+            """
+        )
+        conn.commit()
+
+        row = repair_entry(
+            conn, "e1",
+            note=(
+                "A fast asynchronous HTTP client library written in the Rust programming "
+                "language, used for building networked services."
+            ),
+            embedder=embedder, tagger=tagger, structured_source=HttpxStructuredTagSource(),
+            threshold=settings.canonicalize_threshold,
+            max_tags=settings.tags_per_entry_max,
+            nearest_limit=settings.nearest_tags_limit,
+        )
+        assert row["status"] == "active"
+        assert row["note_source"] == "user"
+        edges = [r[0] for r in conn.execute("SELECT tag FROM entry_tags WHERE entry_id='e1'")]
+        assert edges  # the real pipeline produced at least one tag from the user note
+        assert conn.execute("SELECT count(*) FROM entries_vec WHERE id='e1'").fetchone()[0] == 1

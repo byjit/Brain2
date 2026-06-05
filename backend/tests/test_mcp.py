@@ -107,6 +107,29 @@ def test_save_note_override_populates_note_column_for_page():
         assert row["note_source"] == "user"
 
 
+def test_save_with_agent_tags_canonicalizes_and_persists():
+    """Spec §10: agent-supplied tags are normalized + canonicalized before write, merged
+    additively into the entry's tags (updating counters/tags_text)."""
+    from brain2.config import get_settings
+    from brain2.db.connection import open_user_db
+
+    user_id = get_settings().dev_user_id
+    with auth.user_scope(user_id):
+        saved = save_tool(
+            type="note", note="remember the tokio runtime trick", tags=["Rust", "Async"]
+        )
+
+    with open_user_db(user_id, data_dir=get_settings().data_dir) as conn:
+        edges = {
+            r[0] for r in conn.execute(
+                "SELECT tag FROM entry_tags WHERE entry_id = ?", (saved["id"],)
+            )
+        }
+        assert edges == {"rust", "async"}  # normalized to lowercase
+        for tag in ("rust", "async"):
+            assert conn.execute("SELECT count FROM tags WHERE name=?", (tag,)).fetchone()[0] == 1
+
+
 def test_retrieve_outside_user_scope_raises():
     with pytest.raises(PermissionError):
         retrieve_tool(query="anything")
