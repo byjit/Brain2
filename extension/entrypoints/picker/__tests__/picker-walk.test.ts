@@ -22,6 +22,10 @@ describe("DOM walk", () => {
     expect(expandSelection(outer)).toBe(outer); // parent is body → clamp
   });
 
+  it("expandSelection on <body> clamps to body (never climbs to <html>)", () => {
+    expect(expandSelection(document.body)).toBe(document.body);
+  });
+
   it("contractSelection descends to the first child element", () => {
     const mid = document.getElementById("mid")!;
     expect(contractSelection(mid).id).toBe("inner");

@@ -17,7 +17,12 @@ import { htmlToMarkdown } from "./html-to-markdown";
  */
 export function expandSelection(el: Element): Element {
   const parent = el.parentElement;
-  return parent && parent !== document.body ? parent : el;
+  // Clamp at the top of the content tree: never climb to `<body>` or `<html>`.
+  const atTop =
+    !parent ||
+    parent === document.body ||
+    parent === document.documentElement;
+  return atTop ? el : parent;
 }
 
 /**
