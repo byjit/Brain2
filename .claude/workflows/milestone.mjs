@@ -167,10 +167,11 @@ config knobs nothing uses, and anything beyond the milestone's deliverables (YAG
   },
 ]
 
+const reviewFocus = m.reviewFocus ? `\n\nEXTRA FOCUS THIS MILESTONE: ${m.reviewFocus}` : ''
 const reviews = await parallel(
   LENSES.map(l => () =>
     agent(
-      `${SHARED_CONTEXT}\n\nYou are a code reviewer. ${l.prompt}\n\nReturn structured findings. If you find nothing real, return an empty findings array — do NOT invent issues.`,
+      `${SHARED_CONTEXT}\n\nYou are a code reviewer. ${l.prompt}${reviewFocus}\n\nReturn structured findings. If you find nothing real, return an empty findings array — do NOT invent issues.`,
       { label: `review:${l.key}`, phase: 'Review', schema: FINDINGS_SCHEMA },
     ),
   ),
