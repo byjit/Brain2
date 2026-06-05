@@ -54,6 +54,9 @@ Save content from anywhere, and bring it as context to every AI agents you use.
 - **MCP**: official MCP Python SDK (`mcp`, FastMCP) mounted into FastAPI over the
   streamable-HTTP transport at `/mcp` (the spec §6 names SSE; see backend/ARCHITECTURE.md)
 - **Storage**: Per-user SQLite (`{user_id}.db`) with FTS5 (BM25 keyword search) + sqlite-vec (`vec0`, 768-dim)
+- **LLM / enrichment**: `google-genai` SDK + Gemini Flash for note summarization (async worker);
+  `httpx` + `trafilatura` for page re-fetch and body/metadata extraction. Both sit behind
+  injectable provider interfaces with offline fakes (see backend/ARCHITECTURE.md `services/providers`)
 - **Config**: pydantic-settings, reading the repo-root `.env`
 - **Testing**: pytest
 - **Package Manager**: uv (uses `backend/pyproject.toml` + `uv.lock`)

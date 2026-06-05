@@ -126,6 +126,20 @@ def test_note_less_hit_surfaces_matched_content(conn):
     assert hit["content"] == "distinctive searchable body"
 
 
+def test_short_token_query_still_matches(conn):
+    # Trigram FTS cannot match tokens < 3 chars; a LIKE fallback must still find rows
+    # so 'ai'/'go'/1-2 char CJK don't silently return nothing (spec §15).
+    res = save_entry(conn, CreateEntryRequest(type="note", captured_text="ai safety research"))
+    results = search_entries(conn, "ai")
+    assert any(r["id"] == res.id for r in results)
+
+
+def test_short_cjk_token_is_searchable(conn):
+    res = save_entry(conn, CreateEntryRequest(type="note", captured_text="友達と東京旅行"))
+    results = search_entries(conn, "友達")
+    assert any(r["id"] == res.id for r in results)
+
+
 def test_cjk_substring_is_searchable(conn):
     # unicode61 stores a contiguous CJK run as one token, so a partial-word query
     # never matches. The trigram tokenizer indexes 3-char substrings across scripts,

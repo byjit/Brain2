@@ -27,3 +27,18 @@ def test_env_overrides_data_dir(tmp_path, monkeypatch):
 def test_dev_user_id_has_a_default():
     s = Settings(_env_file=None)
     assert isinstance(s.dev_user_id, str) and s.dev_user_id
+
+
+def test_worker_knobs_have_sensible_defaults():
+    s = Settings(_env_file=None)
+    # Verified against the gemini-api-dev skill (current Flash model).
+    assert s.gemini_summary_model == "gemini-3.5-flash"
+    assert s.worker_max_attempts >= 1
+
+
+def test_worker_knobs_overridable_by_env(monkeypatch):
+    monkeypatch.setenv("GEMINI_SUMMARY_MODEL", "gemini-3.1-flash-lite-preview")
+    monkeypatch.setenv("WORKER_MAX_ATTEMPTS", "5")
+    s = Settings(_env_file=None)
+    assert s.gemini_summary_model == "gemini-3.1-flash-lite-preview"
+    assert s.worker_max_attempts == 5

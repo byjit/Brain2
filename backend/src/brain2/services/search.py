@@ -19,18 +19,34 @@ _DEFAULT_LIMIT = 10
 # re-quote them as FTS5 string literals so every token matches literally.
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 
+# The trigram tokenizer cannot index/match tokens shorter than 3 chars (incl. 1-2 char
+# CJK), so such tokens silently return nothing through MATCH. They fall back to a LIKE
+# substring scan over the indexed columns instead (spec §15 CJK recall).
+_TRIGRAM_MIN_CHARS = 3
 
-def _to_match_query(query: str) -> str | None:
-    """Turn arbitrary user text into a safe FTS5 MATCH expression.
 
-    Extracts word tokens and quotes each as a literal phrase (doubling any embedded
-    quote), then joins with spaces (implicit AND). Returns None when there is nothing
-    searchable so the caller can short-circuit to an empty result.
+def _to_match_query(tokens: list[str]) -> str | None:
+    """Turn FTS-capable tokens into a safe FTS5 MATCH expression.
+
+    Quotes each token as a literal phrase, then joins with spaces (implicit AND). Returns
+    None when there are no FTS-capable tokens so the caller can use the LIKE-only path.
     """
-    tokens = _TOKEN_RE.findall(query)
     if not tokens:
         return None
     return " ".join(f'"{token}"' for token in tokens)
+
+
+def _like_clause(token: str) -> tuple[str, list[str]]:
+    """A clause matching ``token`` as a substring of any indexed FTS column.
+
+    Used for tokens too short for the trigram tokenizer. ``%`` / ``_`` are escaped so a
+    user token is treated literally, not as a LIKE wildcard.
+    """
+    escaped = token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = f"%{escaped}%"
+    cols = ("entries_fts.title", "entries_fts.tags_text", "entries_fts.content")
+    clause = "(" + " OR ".join(f"{c} LIKE ? ESCAPE '\\'" for c in cols) + ")"
+    return clause, [pattern] * len(cols)
 
 
 def _matching_entry_ids_by_tags(conn: sqlite3.Connection, tags: list[str]) -> set[str]:
@@ -76,9 +92,11 @@ def search_entries(
         A list of compact result dicts (spec §10): ``id, url, title, tags, note,
         content, type, saved_at, score``, ordered best-first.
     """
-    match_query = _to_match_query(query)
-    if match_query is None:
+    tokens = _TOKEN_RE.findall(query)
+    if not tokens:
         return []
+    fts_tokens = [t for t in tokens if len(t) >= _TRIGRAM_MIN_CHARS]
+    short_tokens = [t for t in tokens if len(t) < _TRIGRAM_MIN_CHARS]
 
     # Tag pre-filter: resolve the allowed id set first; an empty set means no match.
     allowed_ids: set[str] | None = None
@@ -87,8 +105,20 @@ def search_entries(
         if not allowed_ids:
             return []
 
-    where = ["entries_fts MATCH ?"]
-    params: list = [match_query]
+    where: list[str] = []
+    params: list = []
+    # FTS-capable tokens drive bm25 ranking; short tokens (trigram can't match them) add
+    # a LIKE substring filter so they don't silently zero out the result (spec §15).
+    match_query = _to_match_query(fts_tokens)
+    rank_expr = "0.0"
+    if match_query is not None:
+        where.append("entries_fts MATCH ?")
+        params.append(match_query)
+        rank_expr = "bm25(entries_fts)"
+    for token in short_tokens:
+        clause, clause_params = _like_clause(token)
+        where.append(clause)
+        params.extend(clause_params)
     if type is not None:
         where.append("e.type = ?")
         params.append(type)
@@ -99,7 +129,7 @@ def search_entries(
 
     sql = f"""
         SELECT e.id, e.url, e.title, e.note, e.content, e.type, e.saved_at,
-               bm25(entries_fts) AS rank
+               {rank_expr} AS rank
           FROM entries_fts
           JOIN entries e ON e.id = entries_fts.id
          WHERE {" AND ".join(where)}

@@ -7,6 +7,7 @@ in later milestones (see backend/ARCHITECTURE.md). Run with:
     uv run uvicorn brain2.main:app --reload
 """
 
+import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 
@@ -15,17 +16,24 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from brain2.api import entries
 from brain2.mcp.server import build_mcp_server
+from brain2.services.worker import run_worker_loop
 
 # Path under which the MCP transport is mounted; the SDK serves the endpoint at
 # ``{MCP_MOUNT}/mcp`` (streamable HTTP). Documented in ARCHITECTURE.md.
 MCP_MOUNT = "/mcp"
 
 
-def create_app(mcp_transport_security: TransportSecuritySettings | None = None) -> FastAPI:
+def create_app(
+    mcp_transport_security: TransportSecuritySettings | None = None,
+    *,
+    enable_worker: bool = True,
+) -> FastAPI:
     """Build and configure the FastAPI application.
 
     ``mcp_transport_security`` is forwarded to the MCP server for tests that need a
     permissive DNS-rebinding allow-list; production uses the SDK's secure default.
+    ``enable_worker`` runs the background enrichment drain loop in the lifespan; tests
+    that don't need it can disable it to keep the event loop quiet.
     """
     mcp = build_mcp_server(transport_security=mcp_transport_security)
     mcp_app = mcp.streamable_http_app()
@@ -34,7 +42,16 @@ def create_app(mcp_transport_security: TransportSecuritySettings | None = None) 
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # The streamable-HTTP session manager must run for the app's lifetime.
         async with mcp.session_manager.run():
-            yield
+            worker_task = (
+                asyncio.create_task(run_worker_loop()) if enable_worker else None
+            )
+            try:
+                yield
+            finally:
+                if worker_task is not None:
+                    worker_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await worker_task
 
     app = FastAPI(
         title="Brain2 Backend",

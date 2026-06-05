@@ -16,7 +16,9 @@ _DEV_USER = "test-user"
 
 @pytest.fixture
 def client(tmp_path):
-    app = create_app()
+    # Disable the background worker loop: API tests drive a tmp DATA_DIR via overrides,
+    # and the loop would otherwise scan the real configured data dir.
+    app = create_app(enable_worker=False)
 
     def _override_get_db():
         with open_user_db(_DEV_USER, data_dir=tmp_path) as conn:

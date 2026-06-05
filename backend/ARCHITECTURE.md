@@ -26,7 +26,13 @@ backend/
 │   │   ├── content.py        # conditional content persistence rule (spec §7.3)
 │   │   ├── fts.py            # entries_fts (BM25) index sync: index/remove (spec §9.2)
 │   │   ├── search.py         # BM25 keyword retrieval w/ tag+type pre-filters (spec §11)
-│   │   └── entries.py        # save_entry + delete_entry: sync upsert pipeline (spec §7.1)
+│   │   ├── entries.py        # save_entry + delete_entry: sync upsert pipeline (spec §7.1)
+│   │   ├── note_resolver.py  # note-source fallback ladder body→og→title (spec §7.3)
+│   │   ├── worker.py         # async enrichment worker + drain + lifespan loop (spec §7.1/§7.4)
+│   │   └── providers/        # external-service interfaces (DI) + fakes (spec §7)
+│   │       ├── summarizer.py    # Summarizer Protocol; GeminiSummarizer + FakeSummarizer
+│   │       ├── page_fetcher.py  # PageFetcher Protocol + PageContent; Httpx + Fake impls
+│   │       └── factory.py       # build_providers: real-vs-fake wiring by config
 │   ├── mcp/
 │   │   ├── auth.py           # Bearer -> user_id resolution + per-request user ContextVar
 │   │   ├── tools.py          # transport-free save/retrieve tool logic (reuses services)
@@ -42,6 +48,9 @@ backend/
   above `backend/`) via pydantic-settings. Holds `DATA_DIR` (default `<repo>/data/users`,
   gitignored), a `dev_user_id` stub, and optional placeholders for `GEMINI_API_KEY`,
   `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`. Secrets are read from env, never hardcoded.
+  Also holds the worker knobs: `gemini_summary_model` (default `gemini-3.5-flash` — the
+  current Flash model per the gemini-api-dev skill; the M4 embedding model is
+  `gemini-embedding-001` at 768-dim) and `worker_max_attempts` (retry ceiling, default 3).
   Access via the cached `get_settings()`.
 
 - **db/connection.py** — Per-user DB routing (spec §12). `open_user_db(user_id, data_dir)`
@@ -89,6 +98,42 @@ backend/
     the page/clip content-persistence rule, so an agent-supplied note survives and shows in
     retrieve.
   - `entries.delete_entry` — removes the entry (cascading `entry_tags`) and its FTS row.
+  - `providers/` — external services behind abstractions (dependency inversion) so the
+    worker is unit-testable offline (spec §7). `summarizer.Summarizer` (2-3 sentence note;
+    real `GeminiSummarizer` uses the **google-genai** SDK + Gemini Flash, fake is
+    deterministic and records calls); `page_fetcher.PageFetcher` returns a `PageContent`
+    (`body_text`, `og_description`, `meta_description`, `title`); real `HttpxPageFetcher`
+    fetches with **httpx** and extracts with **trafilatura** (its `description` folds
+    og:description/meta into the spec's combined rung), fake returns canned content.
+    `factory.build_providers(settings)` returns the real pair when `gemini_api_key` is set,
+    else the fakes — so dev/CI run offline by configuration alone. SDK imports are lazy so
+    the SDK is only required when the real provider is used.
+  - `note_resolver.resolve_note(entry, *, fetcher, summarizer)` — the single cohesive
+    fallback ladder (spec §7.3). `note` type → user text verbatim (`note_source=user`, no
+    LLM); `clip`/`conversation` → persisted `content`, verbatim when < ~400 chars else
+    summarized (`note_source=body`); `page` → **re-fetch** the URL (bodies are not
+    persisted) then walk body→og/meta→title, summarizing the body and taking og/title
+    verbatim (`note_source=body|og|title`). Returns a `ResolvedNote(note, note_source)`.
+  - `worker.process_entry(conn, id, *, fetcher, summarizer, max_attempts=None)` — the
+    deterministic, synchronous, idempotent core (spec §7.1/§7.4). Atomically **claims** a
+    `pending`/`failed` row below the ceiling by flipping it to `processing` and
+    incrementing `attempts` in one UPDATE (so `active`/`processing` rows are never
+    re-summarized and a concurrent run can't double-pick). On success: writes
+    `note`/`note_source`, sets `active`, clears `error_message`, bumps `updated_at`, and
+    re-indexes FTS so the note is searchable. An empty resolved note is treated as a
+    failure (actionable `error_message`), never a silently-active blank entry. The claim
+    UPDATE stamps `updated_at` so staleness is measurable. On exception: rolls back, then
+    `_record_failure` sets `failed` + `error_message` at the ceiling, else returns to
+    `pending` and stamps `next_retry_at = now + 2**attempts s`. That `next_retry_at` is
+    **enforced**: the claim UPDATE and `process_pending` SELECT both gate on
+    `next_retry_at <= now`, so a retried entry is not re-claimed until its backoff
+    elapses (spec §7.4). `process_pending` drains one DB; `reset_stale_processing`
+    requeues `processing` rows abandoned past the lease (crash mid-pipeline);
+    `drain_all_users` scans every `{user_id}.db` under `DATA_DIR`, runs the reaper, and
+    isolates per-DB failures (logged and skipped) so one bad DB never aborts the scan;
+    `run_worker_loop` is the async lifespan loop (drains on startup, then every
+    `poll_interval`, blocking DB work offloaded via `asyncio.to_thread`, logs and
+    continues on an unexpected cycle error, cancels cleanly).
 
 - **mcp/** — The MCP server, mounted into FastAPI (spec §10):
   - `auth.resolve_token_to_user_id` — maps a `Bearer <token>` header to a `user_id`.
@@ -115,8 +160,11 @@ backend/
 
 - **api/entries.py + main.py** — `POST /entries` returns `201 {id, status}`. The app
   factory adds a `/health` probe, includes routers, and mounts the MCP server's
-  streamable-HTTP ASGI app at `/mcp` (tools reachable at `/mcp/mcp`). A FastAPI lifespan
-  runs the MCP `session_manager` for the app's lifetime.
+  streamable-HTTP ASGI app at `/mcp` (tools reachable at `/mcp/mcp`). The FastAPI lifespan
+  runs the MCP `session_manager` and (when `enable_worker=True`, the default) launches the
+  background `run_worker_loop` task, cancelling it cleanly on shutdown. Tests pass
+  `enable_worker=False` (they drive a tmp `DATA_DIR` through dependency overrides, so the
+  loop — which scans the real configured `DATA_DIR` — must stay off).
 
 ## MCP transport (spec §6 divergence)
 
@@ -134,12 +182,18 @@ it. Auth is a Bearer-token check today (M2 stub → dev user); full OAuth 2.1 + 
 - **TDD.** Write a failing test first, then minimal code. Services are pure for unit
   testing; the API is covered through a `TestClient` with `get_db`/`get_current_user`
   overridden to a temp `DATA_DIR` (never the real `./data`).
-- **No external calls in M1–M2.** External services (Gemini, Google OAuth) will sit
-  behind provider interfaces with fakes so logic stays testable without live keys.
+- **External services behind interfaces with fakes.** Gemini and page fetch (and, later,
+  Google OAuth) sit behind provider abstractions in `services/providers/` with
+  deterministic fakes, so all logic — including the M3 enrichment worker — stays unit
+  testable without live keys or network. `factory.build_providers` selects real-vs-fake
+  by config; no test requires `GEMINI_API_KEY`. The one optional live Gemini smoke test
+  (`tests/test_gemini_smoke.py`) self-skips unless `GEMINI_API_KEY` is in the environment.
 - **Per-user isolation.** All DB access flows through `get_db` so routing to
   `{user_id}.db` is centralized; never open ad-hoc connections in routes/services.
-- **Async enrichment is deferred.** New entries are `pending`; the worker (M3+) fills
-  note, tags, and vectors. Keep the sync save path under 2s.
+- **Async enrichment.** New entries are `pending`; the M3 worker resolves the note basis
+  (fallback ladder), summarizes, records `note_source`, re-indexes FTS, and sets `active`.
+  Embeddings, vector indexing, and auto-tagging remain deferred to M4/M5 (`tags_text` stays
+  empty, `entries_vec` unpopulated). Keep the sync save path under 2s.
 
 ## Commands (run from `backend/`)
 

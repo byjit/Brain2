@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     google_client_id: str | None = Field(default=None, description="Google OAuth client id (M7)")
     google_client_secret: str | None = Field(default=None, description="Google OAuth client secret (M7)")
 
+    # Async worker knobs (spec §7.4). Verified against the gemini-api-dev skill: the
+    # current Flash model is gemini-3.5-flash; the embedding model (used in M4) is
+    # gemini-embedding-001 at 768-dim.
+    gemini_summary_model: str = Field(
+        default="gemini-3.5-flash", description="Gemini model id for note summarization"
+    )
+    worker_max_attempts: int = Field(
+        default=3, description="Retry ceiling before an entry is marked failed"
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

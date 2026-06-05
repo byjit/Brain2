@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS entries (
   updated_at    TEXT NOT NULL,
   status        TEXT NOT NULL DEFAULT 'pending',
   attempts      INTEGER NOT NULL DEFAULT 0,
+  -- ISO-8601 UTC time before which a retried (pending) entry must not be re-claimed.
+  -- Enforces exponential backoff (spec §7.4); NULL means immediately claimable.
+  next_retry_at TEXT,
   error_message TEXT
 );
 
