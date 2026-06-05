@@ -1,3 +1,4 @@
+import { sendMessage, onMessage } from "webext-bridge/background";
 import { createWebextBridge, setDefaultBridge } from "@/services/messaging";
 import { config } from "@/lib/config";
 import { createClient } from "@/services/api/client";
@@ -18,8 +19,10 @@ import {
 
 /**
  * Auth gate: resolves the access token or throws a recognizable signed_out error.
- * The message layer propagates this to the popup, which shows <SignIn/>. Response
- * schemas stay SaveResult-only (ISP), so we throw rather than widen the contract.
+ * The message layer propagates this to the popup, which string-matches the error
+ * message "signed_out" (webext-bridge serializes the thrown error to a string, so
+ * the popup cannot rely on `instanceof`) and shows <SignIn/>. Response schemas stay
+ * SaveResult-only (ISP), so we throw rather than widen the contract.
  */
 class SignedOutError extends Error {
   constructor() {
@@ -56,6 +59,16 @@ async function refreshFailed(): Promise<number> {
 
 function ensureAlarm(): void {
   browser.alarms.create(POLL_ALARM, { periodInMinutes: 5 });
+}
+
+/** Inject the element-picker content script into the active tab. */
+async function injectPicker(): Promise<void> {
+  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return;
+  await browser.scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ["/content-scripts/picker.js"],
+  });
 }
 
 /**
@@ -105,13 +118,10 @@ function registerMessageHandlers(): void {
   });
 
   // ---- start element picker (event: popup closes, no response) ----
-  startPickerMsg.on(async () => {
-    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return;
-    await browser.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ["/content-scripts/picker.js"],
-    });
+  // Non-async callback so the fire-and-forget injection can't leak an unhandled
+  // rejection back into webext-bridge's dispatcher.
+  startPickerMsg.on(() => {
+    injectPicker().catch(() => {});
   });
 
   // ---- interactive sign-in ----
@@ -161,17 +171,13 @@ export default defineBackground(() => {
     ensureAlarm();
     updateBadge().catch(() => {});
   });
+  // Install the messaging bridge and subscribe every handler SYNCHRONOUSLY — before
+  // any await — so a port/message wake can never arrive before the dispatchers exist
+  // (svc-register-listeners-synchronously). Mirrors content.ts's top-level import.
+  setDefaultBridge(createWebextBridge({ sendMessage, onMessage }));
+  registerMessageHandlers();
+
   // Belt-and-braces: ensure the polling alarm exists on every cold start, not only on
   // install/startup events (which a re-spawned SW may not receive).
   ensureAlarm();
-
-  // webext-bridge/background registers its connect listener at import time and pulls in
-  // webextension-polyfill, which throws under WXT's build-time fake-browser prerender.
-  // Loading it dynamically here keeps it OUT of prerender (defineBackground never runs
-  // `main()` during build) while still wiring the message handlers at real SW startup.
-  void (async () => {
-    const { sendMessage, onMessage } = await import("webext-bridge/background");
-    setDefaultBridge(createWebextBridge({ sendMessage, onMessage }));
-    registerMessageHandlers();
-  })();
 });
