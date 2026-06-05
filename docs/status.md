@@ -1,8 +1,8 @@
 # Brain2 — Implementation Status
 
-**As of:** 2026-06-05 · branch `feat/backend-v1` · **314 tests passing (5 live-Gemini smoke tests skip offline)**
+**As of:** 2026-06-05 · branch `feat/m8-extension` · **backend 314 tests + extension 102 tests passing (5 live-Gemini smoke tests skip offline)**
 
-This tracks progress against the build sequence in [`spec.md` §14](./spec.md). **The backend is complete (M1–M7).** Remaining v1 work is frontend: the `platform/` dashboard (M7's UI half) and the `extension/` capture client (M8 — see [`m8-extension-plan.md`](./m8-extension-plan.md)).
+This tracks progress against the build sequence in [`spec.md` §14](./spec.md). **The backend is complete (M1–M7)** and the **`extension/` capture client (M8) is built** — code-complete, with its dogfood gate blocked on a pending M7 backend change (see below). Remaining v1 frontend work is the `platform/` dashboard (M7's UI half).
 
 ---
 
@@ -36,16 +36,31 @@ Set a strong `jwt_secret` and the Google OAuth redirect URIs in `.env` before an
 
 ---
 
-## ⏳ Pending — v1 remaining (all frontend)
+## ✅ Done — Extension capture client (M8)
+
+Chrome capture extension in [`/extension`](../extension) (WXT 0.20 MV3 + React 19 + Tailwind 4), per the plan in [`m8-extension-plan.md`](./m8-extension-plan.md). See [`extension/README.md`](../extension/README.md).
+
+- **Three capture modes + repair:** popup with **save page** (chat domains → `conversation`, else `page`; secondary "save a different URL"), **element picker** (Shadow-DOM overlay, expand/contract DOM walk, Turndown HTML→Markdown review), and **custom note** — plus a **Needs Attention** repair list.
+- **Architecture:** thin popup UI; the background service worker owns all network/auth/state (save orchestration, auth gate, badge); content scripts (Readability extractor + picker overlay) do DOM work, injected on a user gesture via `activeTab` + `scripting` (no `<all_urls>`).
+- **Auth:** OAuth 2.1 + PKCE (S256) via `chrome.identity.launchWebAuthFlow` against the M7 AS. **No refresh token** — silent (`interactive:false`) re-auth handles the 1h access-token TTL.
+- **Needs-attention badge:** driven by `needsAttentionStore`, refreshed by a 5-min `chrome.alarms` poll (no `setInterval`), on `getFailed`/`repair`, and on cold start.
+- **CORS-by-architecture:** the typed API client is called only from the background worker, whose fetches are CORS-exempt via `host_permissions: [<API origin>/*]`.
+- **Tests:** **102 extension tests (14 files) passing**, fully offline — PKCE (incl. RFC 7636 vector), OAuth url/exchange/state/expiry, API client, stores, chat-domains, HTML→Markdown, extraction, picker DOM-walk, save-helpers, is-signed-out. `pnpm compile` clean, `pnpm build` produces `.output/chrome-mv3/`.
+
+**Honest gap — dogfood is gated:** M8 is code-complete but the end-to-end / dogfood QA (plan Task 10 manual QA; spec M9) **cannot pass yet**. It requires a pending M7 backend change: an unauthenticated `GET /oauth/authorize` must **redirect to Google login** (currently `401`), and the extension's `chrome.identity.getRedirectURL()` must be added to the backend `OAUTH_REDIRECT_URIS` allowlist. Sign-in and the signed-in capture paths can't be exercised against a live backend until both ship.
+
+---
+
+## ⏳ Pending — v1 remaining
 
 ### `platform/` — Web dashboard (M7's UI half) + landing
 React 19 + Vite + TanStack Router (scaffolded: `_landing`, `_public/login`, `_authed/dashboard` stub). To build against the M7 backend: wire the auth guard to `GET /auth/me`, login → `/auth/login` (Google), a Personal Access Tokens page (`/settings/tokens` CRUD, show-once key), and a "needs attention" repair view (`GET /entries/failed` + `PATCH /entries/{id}`). Companion plan to be written (`docs/platform-dashboard-plan.md`).
 
-### `extension/` — Chrome capture client (M8)
-Detailed task-by-task plan in [`m8-extension-plan.md`](./m8-extension-plan.md): popup with three capture modes (save page w/ chat-domain → conversation, element picker + Turndown, custom note), `chrome.identity` PKCE OAuth against the M7 AS, fire-and-forget toast, "needs attention" badge. Built on the existing WXT `defineStore`/`defineMessage` service patterns.
+### M7 backend prerequisite for M8 dogfood
+Before M8 can be dogfooded end-to-end: redirect unauthenticated `/oauth/authorize` → Google (instead of `401`) and add the extension redirect URI to `OAUTH_REDIRECT_URIS` (see the M8 section above).
 
 ### M9–M10 — Dogfood & ship decision
-Two-week solo dogfood; track tag-reuse vs invention + failure rate; ship gate.
+Two-week solo dogfood; track tag-reuse vs invention + failure rate; ship gate. **Blocked** until the M7 `/oauth/authorize` prerequisite ships.
 
 ---
 

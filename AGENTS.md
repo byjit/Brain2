@@ -8,7 +8,7 @@ Save content from anywhere, and bring it as context to every AI agents you use.
 
 ## Repository Structure
 
-- [extension/](/extension): Chrome Extension built using WXT, React, TypeScript, and Tailwind CSS.
+- [extension/](/extension): Chrome capture extension (WXT + React + TypeScript + Tailwind CSS). Popup with three capture modes (save page → chat domains become `conversation`; element picker; custom note) plus a "needs attention" repair list. Thin popup UI; the background service worker owns all network/auth/state; content scripts (`entrypoints/`) do DOM extraction (Readability) and the Shadow-DOM element picker (Turndown HTML→Markdown). Shared contracts in `services/` (`auth` PKCE OAuth, `api` client, `capture` stores/types, `messaging`, `storage`). See [extension/README.md](/extension/README.md).
 - [backend/](/backend): Python + FastAPI backend (per-user SQLite memory store). Managed with **uv**, Python pinned to **3.12**. See [backend/ARCHITECTURE.md](/backend/ARCHITECTURE.md) for layout and conventions.
 - [platform/](/platform): Web platform and user dashboard built using React, TypeScript, Vite, and TanStack Router.
 - [mcp/](/mcp): Directory for Model Context Protocol (MCP) servers.
@@ -42,8 +42,11 @@ Save content from anywhere, and bring it as context to every AI agents you use.
 
 ## Tech Stack
 
-- **Framework**: [WXT](https://wxt.dev/) (Web Extension Framework) for building the Chrome extension
-- **Frontend & UI**: React 19, TypeScript, Tailwind CSS, Base UI, Radix UI (configured in [extension/package.json](/extension/package.json))
+- **Framework**: [WXT](https://wxt.dev/) 0.20 (Web Extension Framework, MV3) for building the Chrome extension
+- **Frontend & UI**: React 19, TypeScript, Tailwind CSS 4, Base UI, Radix UI, sonner (toasts) (configured in [extension/package.json](/extension/package.json))
+- **Capture deps**: `@mozilla/readability` (page/article extraction), `turndown` + `turndown-plugin-gfm` (HTML→Markdown for the element picker), `zod` (shared contracts); `jsdom` (dev) for offline extraction tests
+- **Auth**: OAuth 2.1 + PKCE (S256) via `chrome.identity.launchWebAuthFlow` against the M7 AS; no refresh token (silent `interactive:false` re-auth handles the 1h access-token TTL)
+- **Manifest** ([extension/wxt.config.ts](/extension/wxt.config.ts)): `permissions: [activeTab, scripting, storage, identity, alarms]`, `host_permissions: [<API origin>/*]` (background fetches are CORS-exempt via host permissions; no `<all_urls>` — extractor/picker injected on a user gesture). Env: `VITE_BRAIN2_API_URL`, `VITE_BRAIN2_OAUTH_CLIENT_ID` (see `extension/.env.example`)
 - **Build Tool**: Vite (under the hood via WXT and [vitest.config.ts](/extension/vitest.config.ts))
 - **Testing**: Vitest
 - **Package Manager**: pnpm (uses [pnpm-lock.yaml](/extension/pnpm-lock.yaml))
