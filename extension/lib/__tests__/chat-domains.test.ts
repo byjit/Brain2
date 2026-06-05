@@ -15,6 +15,8 @@ describe("isChatDomain", () => {
   it("rejects unrelated hosts", () => {
     expect(isChatDomain("example.com")).toBe(false);
     expect(isChatDomain("notchatgpt.com.evil.com")).toBe(false);
+    // bare lookalike: must fail on the `.`-boundary, not a substring match
+    expect(isChatDomain("notchatgpt.com")).toBe(false);
   });
   it("exposes the const list", () => {
     expect(CHAT_DOMAINS).toContain("claude.ai");
