@@ -15,7 +15,7 @@ this stays unit-testable offline.
 
 from dataclasses import dataclass
 
-from brain2.services.providers.page_fetcher import PageFetcher
+from brain2.services.providers.page_fetcher import PageContent, PageFetcher
 from brain2.services.providers.summarizer import Summarizer
 
 # A clip shorter than this is its own note — summarizing a highlight loses the value
@@ -29,6 +29,65 @@ class ResolvedNote:
 
     note: str
     note_source: str
+
+
+@dataclass(frozen=True)
+class NoteBasis:
+    """The note BASIS plus whether it still needs summarizing (spec §7.1 steps 2-3, 6).
+
+    This decouples *finding the source text* (cheap, no LLM) from *producing the note*,
+    so M5 can fold the summary into the single combined tagging call instead of making a
+    separate summarizer call (spec §7.2 "exactly one LLM call per entry").
+
+    - ``text`` is always the basis to embed for nearest-tag lookup (spec §7.1 step 3).
+    - When ``needs_summary`` is True the note is produced downstream (by the tagger).
+    - When False, ``note`` is the verbatim note already (user text / short clip / og / title).
+    """
+
+    text: str
+    note_source: str
+    needs_summary: bool
+    note: str  # the verbatim note when needs_summary is False; "" otherwise
+    # The fetched page (page entries only) so the caller can derive structured priors from
+    # its OG/meta keywords without re-fetching (spec §7.2 mechanism 1). Empty otherwise.
+    page: PageContent = PageContent()
+
+
+def resolve_basis(entry: dict, *, fetcher: PageFetcher) -> NoteBasis:
+    """Resolve the note basis WITHOUT summarizing (spec §7.1 steps 2-3).
+
+    Mirrors :func:`resolve_note`'s source ladder but defers summarization: it returns the
+    text to embed/summarize and a ``needs_summary`` flag, so the caller makes exactly one
+    LLM call. The verbatim short-circuits (note / short clip / og / title) are preserved.
+    """
+    entry_type = entry["type"]
+
+    if entry_type == "note":
+        text = entry.get("content") or ""
+        return NoteBasis(text=text, note_source="user", needs_summary=False, note=text)
+
+    if entry_type != "page":
+        text = entry.get("content") or ""
+        if len(text) < _SHORT_CLIP_MAX_CHARS:
+            # Short highlight: the selection IS the note (no LLM).
+            return NoteBasis(text=text, note_source="body", needs_summary=False, note=text)
+        return NoteBasis(text=text, note_source="body", needs_summary=True, note="")
+
+    # page: body not persisted -> re-fetch and walk the ladder. The fetched page is carried
+    # on the result so the caller can derive OG/meta-keyword priors without re-fetching.
+    page = fetcher.fetch(entry["url"])
+    body = (page.body_text or "").strip()
+    if body:
+        return NoteBasis(text=body, note_source="body", needs_summary=True, note="", page=page)
+
+    teaser = _first_nonempty(page.og_description, page.meta_description)
+    if teaser:
+        return NoteBasis(
+            text=teaser, note_source="og", needs_summary=False, note=teaser, page=page
+        )
+
+    title = _first_nonempty(page.title, entry.get("title")) or ""
+    return NoteBasis(text=title, note_source="title", needs_summary=False, note=title, page=page)
 
 
 def resolve_note(

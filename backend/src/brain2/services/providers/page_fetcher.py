@@ -15,12 +15,15 @@ class PageContent:
     """The extracted pieces of a page, in note-source ladder order (spec §7.3).
 
     Any field may be empty/None; the resolver walks body -> og/meta -> title.
+    ``keywords`` carries the page's meta-keyword strings (spec §7.2 mechanism 1, structured
+    priors); each entry may itself be a comma-separated list, normalized downstream.
     """
 
     body_text: str | None = None
     og_description: str | None = None
     meta_description: str | None = None
     title: str | None = None
+    keywords: list[str] | None = None
 
 
 @runtime_checkable
@@ -83,9 +86,13 @@ class HttpxPageFetcher:
         # "og:description / meta" rung; surface it as og_description.
         og_description = getattr(metadata, "description", None) if metadata else None
         title = getattr(metadata, "title", None) if metadata else None
+        # trafilatura surfaces <meta name="keywords"> via `tags` (a list of strings, each
+        # possibly comma-separated) — the spec §7.2 OG/meta-keyword structured prior.
+        keywords = getattr(metadata, "tags", None) if metadata else None
         return PageContent(
             body_text=body,
             og_description=og_description,
             meta_description=None,
             title=title,
+            keywords=keywords or None,
         )

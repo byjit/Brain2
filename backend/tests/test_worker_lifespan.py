@@ -9,9 +9,15 @@ import time
 
 from fastapi.testclient import TestClient
 
+import brain2.services.worker as worker
 from brain2.config import get_settings
 from brain2.db.connection import open_user_db
 from brain2.main import create_app
+from brain2.services.providers.embedder import FakeEmbedder
+from brain2.services.providers.page_fetcher import FakePageFetcher
+from brain2.services.providers.summarizer import FakeSummarizer
+from brain2.services.providers.tagger import FakeTagger
+from brain2.services.structured_tags import FakeStructuredTagSource
 
 
 def _seed_pending_note(data_dir, user_id, entry_id):
@@ -32,6 +38,13 @@ def test_lifespan_worker_drains_queue(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     get_settings.cache_clear()  # pick up the patched DATA_DIR / absent key
+    # Force fakes regardless of any .env-sourced key so the lifespan loop stays offline
+    # (the repo .env may carry GEMINI_API_KEY, which pydantic reads from the file even
+    # after delenv). The factory-vs-fake selection itself is covered by the factory tests.
+    monkeypatch.setattr(worker, "build_providers",
+                        lambda s: (FakeSummarizer(), FakePageFetcher(), FakeEmbedder()))
+    monkeypatch.setattr(worker, "build_tagging_providers",
+                        lambda s: (FakeTagger(), FakeStructuredTagSource()))
 
     _seed_pending_note(tmp_path, "test-user", "life1")
 

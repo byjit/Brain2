@@ -51,6 +51,25 @@ class Settings(BaseSettings):
         default=3, description="Retry ceiling before an entry is marked failed"
     )
 
+    # Auto-tagging knobs (spec §7.2, §15). Deliberately the only tuning knobs: the spec's
+    # anti-fragmentation choices are a HIGH snap threshold (bias to under-merge live) and a
+    # small 3-5 tag cap (bias to reuse over invention). Resist adding more (YAGNI).
+    canonicalize_threshold: float = Field(
+        default=0.90,
+        description="Cosine >= this snaps a candidate tag to an existing one (spec §7.2)",
+    )
+    tags_per_entry_max: int = Field(
+        default=5, description="Maximum tags assigned to one entry (spec §7.2 cap)"
+    )
+    tags_per_entry_min: int = Field(
+        default=3, description="Target minimum tags per entry (spec §7.2)"
+    )
+    # Cap on existing tags pulled into the LLM prompt so it stays small at hundreds of
+    # tags (spec §7.2: "at hundreds of tags they won't fit the prompt").
+    nearest_tags_limit: int = Field(
+        default=10, description="Max nearest existing tags shown to the tagger (spec §7.2)"
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -76,8 +76,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS entries_vec USING vec0(
   embedding FLOAT[768] distance_metric=cosine
 );
 
--- Semantic + dedup over tag descriptions (the tag embedding layer)
+-- Semantic + dedup over tag descriptions (the tag embedding layer).
+-- distance_metric=cosine so the canonicalize snap (cosine >= 0.90, spec §7.2) and the
+-- nearest-existing-tag KNN rank by semantic direction; similarity is then 1 - distance.
+-- Declared pre-data so no migration is needed.
 CREATE VIRTUAL TABLE IF NOT EXISTS tags_vec USING vec0(
   name      TEXT PRIMARY KEY,
-  embedding FLOAT[768]              -- embedding of description, not the bare name
+  embedding FLOAT[768] distance_metric=cosine  -- embedding of description, not the bare name
 );

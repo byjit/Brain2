@@ -54,10 +54,13 @@ Save content from anywhere, and bring it as context to every AI agents you use.
 - **MCP**: official MCP Python SDK (`mcp`, FastMCP) mounted into FastAPI over the
   streamable-HTTP transport at `/mcp` (the spec §6 names SSE; see backend/ARCHITECTURE.md)
 - **Storage**: Per-user SQLite (`{user_id}.db`) with FTS5 (BM25 keyword search) + sqlite-vec (`vec0`, 768-dim)
-- **LLM / enrichment**: `google-genai` SDK + Gemini Flash for note summarization and
-  `gemini-embedding-001` (768-dim) for note/query embeddings (async worker); `httpx` +
-  `trafilatura` for page re-fetch and body/metadata extraction. All sit behind injectable
-  provider interfaces with offline fakes (see backend/ARCHITECTURE.md `services/providers`)
+- **LLM / enrichment**: `google-genai` SDK + Gemini Flash for note summarization and the
+  M5 single combined auto-tagging call (structured output: note + tags + new-tag
+  descriptions), `gemini-embedding-001` (768-dim) for note/query/tag-description embeddings
+  (async worker); `httpx` + `trafilatura` for page re-fetch and body/metadata extraction,
+  and `httpx` for the unauthenticated GitHub REST API (structured-source tag priors). All
+  sit behind injectable provider interfaces with offline fakes (see backend/ARCHITECTURE.md
+  `services/providers` + the M5 auto-tagging services)
 - **Config**: pydantic-settings, reading the repo-root `.env`
 - **Testing**: pytest
 - **Package Manager**: uv (uses `backend/pyproject.toml` + `uv.lock`)

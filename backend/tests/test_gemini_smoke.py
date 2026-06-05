@@ -13,6 +13,7 @@ from brain2.config import get_settings
 from brain2.db.connection import open_user_db
 from brain2.services.providers.embedder import EMBEDDING_DIM, GeminiEmbedder
 from brain2.services.providers.summarizer import GeminiSummarizer
+from brain2.services.providers.tagger import GeminiTagger, TagRequest
 from brain2.services.vector import index_entry_vector, vector_search
 
 pytestmark = pytest.mark.skipif(
@@ -66,3 +67,33 @@ def test_live_paraphrase_query_returns_intended_entry(tmp_path):
         # Paraphrase: shares no salient words with the stored target note.
         ids = vector_search(conn, embedder.embed("networking over the web in a memory-safe systems language"))
         assert ids[0] == "target"
+
+
+def test_live_combined_tagger_call_returns_note_and_tags():
+    """The single combined call (spec §7.2): one round trip yields a summary note +
+    candidate tags + a description for each new tag, via Gemini structured output."""
+    settings = get_settings()
+    tagger = GeminiTagger(
+        api_key=settings.gemini_api_key,
+        model=settings.gemini_summary_model,
+        min_tags=settings.tags_per_entry_min,
+        max_tags=settings.tags_per_entry_max,
+    )
+    result = tagger.propose(
+        TagRequest(
+            basis_text=(
+                "httpx is a fully featured HTTP client for Python 3, providing sync and "
+                "async APIs, HTTP/1.1 and HTTP/2 support, and connection pooling."
+            ),
+            structured_tags=["python", "http"],
+            nearest_existing_tags=["python", "async"],
+            needs_summary=True,
+        )
+    )
+    assert result.note.strip()  # a summary was produced in the same call
+    assert 1 <= len(result.tags) <= settings.tags_per_entry_max
+    # Every NEW tag (not in the existing set) carries a concept description.
+    existing = {"python", "async"}
+    for tag in result.tags:
+        if tag not in existing:
+            assert result.new_tag_descriptions.get(tag, "").strip()

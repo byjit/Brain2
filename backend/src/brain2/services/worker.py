@@ -20,13 +20,16 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from brain2.config import get_settings
-from brain2.services.providers.factory import build_providers
+from brain2.services.providers.factory import build_providers, build_tagging_providers
 from brain2.db.connection import open_user_db
 from brain2.services.fts import index_entry
-from brain2.services.note_resolver import resolve_note
+from brain2.services.note_resolver import resolve_basis, resolve_note
 from brain2.services.providers.embedder import Embedder
 from brain2.services.providers.page_fetcher import PageFetcher
 from brain2.services.providers.summarizer import Summarizer
+from brain2.services.providers.tagger import Tagger
+from brain2.services.structured_tags import StructuredTagSource
+from brain2.services.tagging import apply_tags
 from brain2.services.vector import index_entry_vector
 
 logger = logging.getLogger(__name__)
@@ -70,6 +73,8 @@ def process_entry(
     fetcher: PageFetcher,
     summarizer: Summarizer,
     embedder: Embedder | None = None,
+    tagger: Tagger | None = None,
+    structured_source: StructuredTagSource | None = None,
     max_attempts: int | None = None,
 ) -> bool:
     """Process a single entry. Returns True if it was claimed and run, else False.
@@ -82,6 +87,12 @@ def process_entry(
     ``entries_vec`` (clearing any prior vector) so the vector half of retrieval is in
     lockstep with the note (spec §7.1 step 8). The production loop always supplies one;
     it is optional only so note-only unit tests need not wire an embedder.
+
+    When ``tagger`` AND ``structured_source`` AND ``embedder`` are all provided, the M5
+    auto-tagging path runs: the basis is resolved WITHOUT summarizing, then a SINGLE
+    combined call produces the note (when needed) + tags + new-tag descriptions, which are
+    canonicalized and persisted (spec §7.2). Without them, the M3/M4 path (standalone
+    summarizer, no tags) runs — so note-only unit tests need not wire a tagger.
     """
     ceiling = max_attempts if max_attempts is not None else get_settings().worker_max_attempts
 
@@ -106,9 +117,19 @@ def process_entry(
     conn.commit()
 
     row = conn.execute("select * from entries where id = ?", (entry_id,)).fetchone()
+    tagging_enabled = tagger is not None and structured_source is not None and embedder is not None
     try:
-        resolved = resolve_note(dict(row), fetcher=fetcher, summarizer=summarizer)
-        if not (resolved.note or "").strip():
+        if tagging_enabled:
+            note, note_source = _enrich_with_tags(
+                conn, dict(row), fetcher=fetcher, embedder=embedder,
+                tagger=tagger, structured_source=structured_source,
+            )
+        else:
+            # M3/M4 path: standalone summarizer, no auto-tagging (note-only unit tests).
+            resolved = resolve_note(dict(row), fetcher=fetcher, summarizer=summarizer)
+            note, note_source = resolved.note, resolved.note_source
+
+        if not (note or "").strip():
             # No usable content was extracted. Marking this 'active' would leave a blank,
             # unrepairable entry — the silent black hole spec §7.4 forbids — so route it
             # through the retry/fail path with an actionable message instead.
@@ -123,21 +144,23 @@ def process_entry(
                    error_message = NULL, next_retry_at = NULL, updated_at = ?
              WHERE id = ?
             """,
-            (resolved.note, resolved.note_source, _now_iso(), entry_id),
+            (note, note_source, _now_iso(), entry_id),
         )
-        # Re-index FTS from the effective row so the (new) note's content stays searchable
-        # alongside title + tags + any persisted body.
-        effective = conn.execute(
-            "select title, content from entries where id = ?", (entry_id,)
-        ).fetchone()
-        index_entry(conn, entry_id, effective["title"], effective["content"])
+        # Re-index FTS from the effective row so title + content stay searchable alongside
+        # tags. The tagging path already refreshed FTS (with tags_text) in _persist_tags, so
+        # only the non-tagging path needs to index here — a single owner of the FTS write.
+        if not tagging_enabled:
+            effective = conn.execute(
+                "select title, content from entries where id = ?", (entry_id,)
+            ).fetchone()
+            index_entry(conn, entry_id, effective["title"], effective["content"])
         # Embed the NOTE (not the body) into entries_vec for semantic search (spec §11);
         # delete-then-insert keeps exactly one vector per entry across re-enrichment.
         if embedder is not None:
             # Bound the embedder input so an oversized note cannot fail every attempt and
             # block activation; FTS above already indexed the full content.
             index_entry_vector(
-                conn, entry_id, embedder.embed(resolved.note[:_EMBED_INPUT_MAX_CHARS])
+                conn, entry_id, embedder.embed(note[:_EMBED_INPUT_MAX_CHARS])
             )
         conn.commit()
         return True
@@ -145,6 +168,41 @@ def process_entry(
         conn.rollback()
         _record_failure(conn, entry_id, str(exc), ceiling)
         return True
+
+
+def _enrich_with_tags(
+    conn: sqlite3.Connection,
+    row: dict,
+    *,
+    fetcher: PageFetcher,
+    embedder: Embedder,
+    tagger: Tagger,
+    structured_source: StructuredTagSource,
+) -> tuple[str, str]:
+    """M5 enrichment: resolve basis (no LLM), then ONE combined tag+note call (spec §7.2).
+
+    Returns ``(note, note_source)``. The note is the LLM summary on the summarize path, or
+    the verbatim basis note (user / short clip / og / title) otherwise.
+    """
+    settings = get_settings()
+    basis = resolve_basis(row, fetcher=fetcher)
+    note = apply_tags(
+        conn,
+        row["id"],
+        basis_text=basis.text,
+        needs_summary=basis.needs_summary,
+        source=structured_source,
+        tagger=tagger,
+        embedder=embedder,
+        threshold=settings.canonicalize_threshold,
+        max_tags=settings.tags_per_entry_max,
+        nearest_limit=settings.nearest_tags_limit,
+        url=row.get("url"),
+        page=basis.page,
+    )
+    # On the summarize path the note comes from the single call; otherwise it is the
+    # verbatim basis note already resolved.
+    return (note if basis.needs_summary else basis.note), basis.note_source
 
 
 def _record_failure(conn: sqlite3.Connection, entry_id: str, message: str, ceiling: int) -> None:
@@ -182,6 +240,8 @@ def process_pending(
     fetcher: PageFetcher,
     summarizer: Summarizer,
     embedder: Embedder | None = None,
+    tagger: Tagger | None = None,
+    structured_source: StructuredTagSource | None = None,
     max_attempts: int | None = None,
 ) -> int:
     """Drain all claimable entries in one DB. Returns the number successfully activated."""
@@ -202,7 +262,8 @@ def process_pending(
     for entry_id in ids:
         process_entry(
             conn, entry_id, fetcher=fetcher, summarizer=summarizer,
-            embedder=embedder, max_attempts=ceiling,
+            embedder=embedder, tagger=tagger, structured_source=structured_source,
+            max_attempts=ceiling,
         )
         row = conn.execute("select status from entries where id = ?", (entry_id,)).fetchone()
         if row["status"] == "active":
@@ -239,6 +300,8 @@ def drain_all_users(
     fetcher: PageFetcher,
     summarizer: Summarizer,
     embedder: Embedder | None = None,
+    tagger: Tagger | None = None,
+    structured_source: StructuredTagSource | None = None,
     max_attempts: int | None = None,
 ) -> int:
     """Scan every ``{user_id}.db`` under ``data_dir`` and drain its queue (spec §6, §7.1).
@@ -258,7 +321,8 @@ def drain_all_users(
                 reset_stale_processing(conn)
                 total += process_pending(
                     conn, fetcher=fetcher, summarizer=summarizer,
-                    embedder=embedder, max_attempts=max_attempts,
+                    embedder=embedder, tagger=tagger, structured_source=structured_source,
+                    max_attempts=max_attempts,
                 )
         except Exception:  # noqa: BLE001 — one bad DB must not abort the whole drain
             logger.exception("Failed to drain user DB %s; skipping", user_id)
@@ -275,6 +339,7 @@ async def run_worker_loop(*, poll_interval: float = 10.0) -> None:
     """
     settings = get_settings()
     summarizer, fetcher, embedder = build_providers(settings)
+    tagger, structured_source = build_tagging_providers(settings)
     while True:
         try:
             await asyncio.to_thread(
@@ -283,6 +348,8 @@ async def run_worker_loop(*, poll_interval: float = 10.0) -> None:
                 fetcher=fetcher,
                 summarizer=summarizer,
                 embedder=embedder,
+                tagger=tagger,
+                structured_source=structured_source,
             )
         except asyncio.CancelledError:
             # Graceful shutdown: stop draining and let the task unwind.
