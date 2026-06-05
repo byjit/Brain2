@@ -28,6 +28,7 @@ export const FailedEntry = z.object({
   updated_at: z.string(),
 });
 
+export type SaveType = z.infer<typeof SaveType>;
 export type SaveRequest = z.infer<typeof SaveRequest>;
 export type SaveResult = z.infer<typeof SaveResult>;
 export type Tokens = z.infer<typeof Tokens>;
