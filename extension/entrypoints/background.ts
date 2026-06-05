@@ -177,7 +177,9 @@ export default defineBackground(() => {
   setDefaultBridge(createWebextBridge({ sendMessage, onMessage }));
   registerMessageHandlers();
 
-  // Belt-and-braces: ensure the polling alarm exists on every cold start, not only on
-  // install/startup events (which a re-spawned SW may not receive).
+  // Belt-and-braces: on every cold start (incl. an idle-killed SW respawn, which fires
+  // neither onInstalled nor onStartup) ensure the polling alarm exists and the badge
+  // reflects the persisted "needs attention" count.
   ensureAlarm();
+  updateBadge().catch(() => {});
 });
