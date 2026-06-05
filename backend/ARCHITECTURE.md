@@ -25,12 +25,15 @@ backend/
 │   │   ├── url_normalize.py  # pure URL normalization for dedup (spec §7.1)
 │   │   ├── content.py        # conditional content persistence rule (spec §7.3)
 │   │   ├── fts.py            # entries_fts (BM25) index sync: index/remove (spec §9.2)
-│   │   ├── search.py         # BM25 keyword retrieval w/ tag+type pre-filters (spec §11)
+│   │   ├── prefilter.py      # shared tag/type pre-filter id-set helpers (spec §11)
+│   │   ├── vector.py         # entries_vec upsert/remove + sqlite-vec KNN (spec §9.2/§11)
+│   │   ├── search.py         # hybrid BM25+vector RRF retrieval + BM25-only (spec §11)
 │   │   ├── entries.py        # save_entry + delete_entry: sync upsert pipeline (spec §7.1)
 │   │   ├── note_resolver.py  # note-source fallback ladder body→og→title (spec §7.3)
 │   │   ├── worker.py         # async enrichment worker + drain + lifespan loop (spec §7.1/§7.4)
 │   │   └── providers/        # external-service interfaces (DI) + fakes (spec §7)
 │   │       ├── summarizer.py    # Summarizer Protocol; GeminiSummarizer + FakeSummarizer
+│   │       ├── embedder.py      # Embedder Protocol; GeminiEmbedder + FakeEmbedder (768-dim)
 │   │       ├── page_fetcher.py  # PageFetcher Protocol + PageContent; Httpx + Fake impls
 │   │       └── factory.py       # build_providers: real-vs-fake wiring by config
 │   ├── mcp/
@@ -78,15 +81,33 @@ backend/
     which the default unicode61 tokenizer stores as one un-splittable token — is matchable
     by ≥3-char substring (spec §15 CJK recall). Chosen before rows accumulate, since
     changing a populated virtual table requires a full rebuild.
-  - `search.search_entries` — BM25 ranking via FTS5 `MATCH` + `bm25()` over
-    title+tags_text+content, with optional `tags` (entry must carry ALL) and `type`
-    pre-filters and a `limit` (default 10). User query text is reduced to quoted word
-    tokens so FTS5 operators (quotes, NEAR, AND/OR, `*`, `:`, parens) can't cause syntax
-    errors. Returns the compact spec §10 shape (now including `content`); `score` is
-    `-bm25()` (higher = better). Decoupled from transport so REST (future) and MCP share it.
-    The projection surfaces `content` alongside `note`: pre-enrichment (M2) a clip/
-    conversation matches on its body in `content` while `note` is NULL until summarization
-    (M5), so the agent can read what BM25 matched on instead of getting id+score only.
+  - `prefilter` — the single place owning the tag/type pre-filter id-set SQL
+    (`entry_ids_with_all_tags` conjunctive over `entry_tags`; `entry_ids_of_type`). Both
+    retrieval legs import it so the BM25 and vector legs filter identically (DRY).
+  - `vector` — the semantic leg over `entries_vec` (spec §9.2/§11). `index_entry_vector`
+    delete-then-inserts the 768-dim note vector (vec0 has no UPSERT, so this guarantees
+    one row per entry and the clear/replace-on-re-enrichment the spec requires);
+    `remove_entry_vector` drops it on delete; `vector_search` runs the sqlite-vec
+    `vec0` KNN (`WHERE embedding MATCH ? AND k = ?`, vectors via `sqlite_vec.serialize_float32`)
+    and returns ranked ids. Tag/type pre-filters are applied around the KNN via `prefilter`
+    (over-fetching when filtered, since vec0 KNN can't join arbitrary WHERE clauses).
+    A dimension mismatch raises a typed `ValueError` rather than silently corrupting the
+    index (sqlite-vec would also reject it, but later and opaquely).
+  - `search.search_entries` — BM25 leg: ranking via FTS5 `MATCH` + `bm25()` over
+    title+tags_text+content, with optional `tags`/`type` pre-filters (via `prefilter`) and
+    a `limit` (default 10). User query text is reduced to quoted word tokens so FTS5
+    operators (quotes, NEAR, AND/OR, `*`, `:`, parens) can't cause syntax errors. Returns
+    the compact spec §10 shape (incl. `content`); `score` is `-bm25()` (higher = better).
+    Kept as the internal BM25-only path.
+  - `search.hybrid_search` — the public retrieve path (spec §10/§11). Fuses BM25 (set A,
+    reusing `search_entries` — no second BM25 copy) and `vector_search` (set B) with
+    Reciprocal Rank Fusion: `score = Σ 1/(60 + rank_i)`. Both legs run under the SAME
+    tag/type pre-filters, so a filtered entry never appears in either leg or the fused
+    result. Each leg over-fetches a candidate pool (50) so an entry strong in only one leg
+    still surfaces; an empty/whitespace query (no searchable tokens) returns `[]`. Returns
+    the compact §10 shape ordered by fused score (default limit 10), so an entry found
+    only by vector (a paraphrase with no lexical overlap) is still retrieved. Decoupled
+    from transport so REST (future) and MCP share it.
   - `entries.save_entry` — normalizes URL, applies content rule, upserts by normalized
     URL (insert `status='pending'` → `saved`; existing → `updated`); notes never dedup.
     Calls `fts.index_entry` on every insert/update (re-indexing from the post-COALESCE row).
@@ -97,30 +118,41 @@ backend/
     the `note` column with `note_source='user'` on both insert and update, independent of
     the page/clip content-persistence rule, so an agent-supplied note survives and shows in
     retrieve.
-  - `entries.delete_entry` — removes the entry (cascading `entry_tags`) and its FTS row.
+  - `entries.delete_entry` — removes the entry (cascading `entry_tags`), its FTS row, and
+    its `entries_vec` note vector (spec §10 delete).
   - `providers/` — external services behind abstractions (dependency inversion) so the
     worker is unit-testable offline (spec §7). `summarizer.Summarizer` (2-3 sentence note;
     real `GeminiSummarizer` uses the **google-genai** SDK + Gemini Flash, fake is
-    deterministic and records calls); `page_fetcher.PageFetcher` returns a `PageContent`
-    (`body_text`, `og_description`, `meta_description`, `title`); real `HttpxPageFetcher`
-    fetches with **httpx** and extracts with **trafilatura** (its `description` folds
-    og:description/meta into the spec's combined rung), fake returns canned content.
-    `factory.build_providers(settings)` returns the real pair when `gemini_api_key` is set,
-    else the fakes — so dev/CI run offline by configuration alone. SDK imports are lazy so
-    the SDK is only required when the real provider is used.
+    deterministic and records calls); `embedder.Embedder` (768-dim note/query vector; real
+    `GeminiEmbedder` uses the **google-genai** SDK `embed_content` with
+    `gemini-embedding-001` at `output_dimensionality=768`, fake is a deterministic hashed
+    bag-of-words unit vector — *similarity-meaningful* so token overlap raises cosine and
+    KNN/RRF ordering is genuinely testable offline); `page_fetcher.PageFetcher` returns a
+    `PageContent` (`body_text`, `og_description`, `meta_description`, `title`); real
+    `HttpxPageFetcher` fetches with **httpx** and extracts with **trafilatura** (its
+    `description` folds og:description/meta into the spec's combined rung), fake returns
+    canned content. `factory.build_providers(settings)` returns the real
+    `(summarizer, fetcher, embedder)` triple when `gemini_api_key` is set, else the fakes —
+    so dev/CI run offline by configuration alone. SDK imports are lazy so the SDK is only
+    required when the real provider is used.
   - `note_resolver.resolve_note(entry, *, fetcher, summarizer)` — the single cohesive
     fallback ladder (spec §7.3). `note` type → user text verbatim (`note_source=user`, no
     LLM); `clip`/`conversation` → persisted `content`, verbatim when < ~400 chars else
     summarized (`note_source=body`); `page` → **re-fetch** the URL (bodies are not
     persisted) then walk body→og/meta→title, summarizing the body and taking og/title
     verbatim (`note_source=body|og|title`). Returns a `ResolvedNote(note, note_source)`.
-  - `worker.process_entry(conn, id, *, fetcher, summarizer, max_attempts=None)` — the
-    deterministic, synchronous, idempotent core (spec §7.1/§7.4). Atomically **claims** a
-    `pending`/`failed` row below the ceiling by flipping it to `processing` and
+  - `worker.process_entry(conn, id, *, fetcher, summarizer, embedder=None, max_attempts=None)`
+    — the deterministic, synchronous, idempotent core (spec §7.1/§7.4). Atomically
+    **claims** a `pending`/`failed` row below the ceiling by flipping it to `processing` and
     incrementing `attempts` in one UPDATE (so `active`/`processing` rows are never
     re-summarized and a concurrent run can't double-pick). On success: writes
-    `note`/`note_source`, sets `active`, clears `error_message`, bumps `updated_at`, and
-    re-indexes FTS so the note is searchable. An empty resolved note is treated as a
+    `note`/`note_source`, sets `active`, clears `error_message`, bumps `updated_at`,
+    re-indexes FTS, and — when an `embedder` is supplied — embeds the resolved **note**
+    (not the body) into `entries_vec` via `vector.index_entry_vector` (clear/replace on
+    re-enrichment); a failed entry leaves no vector. The `embedder` is threaded through
+    `process_pending` / `drain_all_users` / `run_worker_loop` (which builds it from config);
+    it is optional only so note-only unit tests need not wire one. An empty resolved note
+    is treated as a
     failure (actionable `error_message`), never a silently-active blank entry. The claim
     UPDATE stamps `updated_at` so staleness is measurable. On exception: rolls back, then
     `_record_failure` sets `failed` + `error_message` at the ceiling, else returns to
@@ -142,10 +174,12 @@ backend/
     `current_user_id` bind the resolved user in a `ContextVar` for the request.
   - `tools.save_tool` / `tools.retrieve_tool` — transport-free tool logic. They resolve
     the current user, open that user's DB, and **delegate to the shared `save_entry` /
-    `search_entries`** so REST and MCP have one implementation (DRY). Per spec §10 `save`
-    treats `note` as authored text: for `type=note` it is the user's note (its only copy →
-    `captured_text`); for URL-backed types it is the override that skips summarization (→ the
-    `note` column, reflected back in retrieve). Agent-supplied `tags` are deferred to M5.
+    `hybrid_search`** so REST and MCP have one implementation (DRY). `retrieve_tool` is the
+    public hybrid path (BM25 + vector + RRF); it builds the embedder from config (real
+    Gemini when keyed, else fake). Per spec §10 `save` treats `note` as authored text: for
+    `type=note` it is the user's note (its only copy → `captured_text`); for URL-backed
+    types it is the override that skips summarization (→ the `note` column, reflected back
+    in retrieve). Agent-supplied `tags` are deferred to M5.
   - `server.build_mcp_server` — FastMCP server `brain2_mcp` exposing `save`
     (destructive/idempotent upsert, openWorld) and `retrieve` (readOnly). Flat, typed tool
     parameters (clean `inputSchema`) and typed returns (structured output). Each tool reads
@@ -186,14 +220,22 @@ it. Auth is a Bearer-token check today (M2 stub → dev user); full OAuth 2.1 + 
   Google OAuth) sit behind provider abstractions in `services/providers/` with
   deterministic fakes, so all logic — including the M3 enrichment worker — stays unit
   testable without live keys or network. `factory.build_providers` selects real-vs-fake
-  by config; no test requires `GEMINI_API_KEY`. The one optional live Gemini smoke test
-  (`tests/test_gemini_smoke.py`) self-skips unless `GEMINI_API_KEY` is in the environment.
+  by config (summarizer + page-fetcher + **embedder**); no test requires `GEMINI_API_KEY`.
+  The optional live Gemini tests (`tests/test_gemini_smoke.py` — summarizer, embedder
+  768-dim, and a real-embedding paraphrase retrieval) self-skip unless `GEMINI_API_KEY` is
+  in the *environment* (the repo `.env` is read by config but not exported to `os.environ`,
+  so the default suite still skips them). The `FakeEmbedder` is deliberately
+  similarity-meaningful so the offline KNN/RRF tests assert real ordering.
 - **Per-user isolation.** All DB access flows through `get_db` so routing to
   `{user_id}.db` is centralized; never open ad-hoc connections in routes/services.
-- **Async enrichment.** New entries are `pending`; the M3 worker resolves the note basis
-  (fallback ladder), summarizes, records `note_source`, re-indexes FTS, and sets `active`.
-  Embeddings, vector indexing, and auto-tagging remain deferred to M4/M5 (`tags_text` stays
-  empty, `entries_vec` unpopulated). Keep the sync save path under 2s.
+- **Async enrichment.** New entries are `pending`; the worker resolves the note basis
+  (fallback ladder), summarizes, records `note_source`, re-indexes FTS, embeds the **note**
+  into `entries_vec` (M4), and sets `active`. Auto-tagging (and `tags_text`/`tags_vec`)
+  remains deferred to M5. Keep the sync save path under 2s.
+- **Hybrid retrieval (M4).** `retrieve` fuses BM25 (set A) and vector KNN over the note
+  embedding (set B) with RRF (`k=60`). Tag/type are pre-filters on both legs (`prefilter`).
+  `search.search_entries` stays as the internal BM25-only path; `search.hybrid_search` is
+  the public path the MCP `retrieve` tool calls.
 
 ## Commands (run from `backend/`)
 

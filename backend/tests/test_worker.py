@@ -10,6 +10,7 @@ import sqlite3
 import pytest
 
 from brain2.db.connection import open_user_db
+from brain2.services.providers.embedder import FakeEmbedder
 from brain2.services.providers.page_fetcher import FakePageFetcher, PageContent
 from brain2.services.providers.summarizer import FakeSummarizer
 from brain2.services.worker import process_entry, process_pending
@@ -279,3 +280,79 @@ def test_claim_updates_updated_at(conn):
     before = _row(conn, "u1")["updated_at"]
     process_entry(conn, "u1", fetcher=FakePageFetcher(), summarizer=FakeSummarizer())
     assert _row(conn, "u1")["updated_at"] != before
+
+
+# --- note embedding into entries_vec (spec §7.1 step 8, §11 vector half) -----
+
+
+def _vec_count(conn, entry_id):
+    return conn.execute(
+        "SELECT count(*) FROM entries_vec WHERE id = ?", (entry_id,)
+    ).fetchone()[0]
+
+
+def test_worker_embeds_note_into_entries_vec(conn):
+    _insert(conn, id="v1", type="note", content="rust async http library")
+    process_entry(
+        conn, "v1", fetcher=FakePageFetcher(), summarizer=FakeSummarizer(),
+        embedder=FakeEmbedder(),
+    )
+    assert _row(conn, "v1")["status"] == "active"
+    assert _vec_count(conn, "v1") == 1
+
+
+def test_reenrichment_replaces_vector(conn):
+    # A failed entry that is reprocessed must end with exactly one (fresh) vector row.
+    _insert(conn, id="v2", type="note", content="first version of the note")
+    process_entry(conn, "v2", fetcher=FakePageFetcher(), summarizer=FakeSummarizer(), embedder=FakeEmbedder())
+    # Force a re-enrichment by resetting to pending.
+    conn.execute("UPDATE entries SET status='pending' WHERE id='v2'")
+    conn.commit()
+    process_entry(conn, "v2", fetcher=FakePageFetcher(), summarizer=FakeSummarizer(), embedder=FakeEmbedder())
+    assert _vec_count(conn, "v2") == 1
+
+
+def test_failed_entry_has_no_vector(conn):
+    # An entry whose enrichment fails must not leave a vector row behind.
+    _insert(conn, id="v3", type="page", url="https://x.test/novec")
+    fetcher = FakePageFetcher(raises=RuntimeError("boom"))
+    process_entry(conn, "v3", fetcher=fetcher, summarizer=FakeSummarizer(), embedder=FakeEmbedder(), max_attempts=1)
+    assert _row(conn, "v3")["status"] == "failed"
+    assert _vec_count(conn, "v3") == 0
+
+
+class _TokenLimitedEmbedder(FakeEmbedder):
+    """Embedder that rejects inputs over a token cap, mimicking Gemini's input limit."""
+
+    def __init__(self, *, max_chars: int) -> None:
+        super().__init__()
+        self._max_chars = max_chars
+
+    def embed(self, text: str) -> list[float]:
+        if len(text) > self._max_chars:
+            raise RuntimeError("input exceeds embedding token limit")
+        return super().embed(text)
+
+
+def test_large_note_still_activates_and_embeds_via_truncation(conn):
+    # A very large note must not become a permanent failure: the worker bounds the text
+    # sent to the embedder so a length-sensitive embedder still succeeds, FTS + 'active'
+    # commit, and the entry stays semantically searchable (spec §7.1, §7.4).
+    huge = "kubernetes networking " * 5000  # ~110 KB, far over a token limit
+    _insert(conn, id="big", type="note", content=huge)
+    embedder = _TokenLimitedEmbedder(max_chars=10_000)
+
+    process_entry(
+        conn, "big", fetcher=FakePageFetcher(), summarizer=FakeSummarizer(),
+        embedder=embedder, max_attempts=1,
+    )
+
+    row = _row(conn, "big")
+    assert row["status"] == "active"  # not permanently 'failed'
+    assert row["error_message"] is None
+    assert _vec_count(conn, "big") == 1  # truncated prefix still embedded
+    # And it remains lexically searchable.
+    hit = conn.execute(
+        "select id from entries_fts where entries_fts match ?", ('"kubernetes"',)
+    ).fetchone()
+    assert hit is not None and hit[0] == "big"

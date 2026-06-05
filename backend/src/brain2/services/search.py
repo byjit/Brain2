@@ -1,15 +1,26 @@
-"""Keyword retrieval over ``entries_fts`` using FTS5 BM25 (spec §11 BM25 half).
+"""Hybrid retrieval over a user's DB (spec §10 retrieve, §11 search strategy).
 
-This is the keyword half of the hybrid search; vector + RRF arrive in M4. It is
-decoupled from transport so both REST (future) and MCP call the same function.
+Two legs, fused with Reciprocal Rank Fusion (RRF):
+- **BM25** (set A): ``bm25(entries_fts)`` over title + tags_text + content. SQLite returns
+  a lower (more negative) score for a better match, so rows are ordered ascending and the
+  score is negated into a "higher is better" value.
+- **Vector** (set B): sqlite-vec KNN over the note embedding (``services.vector``).
 
-Ranking: ``bm25(entries_fts)`` over title + tags_text + content. SQLite returns a
-lower (more negative) bm25 score for a better match, so results are ordered ascending
-and the score is negated into an intuitive "higher is better" value for the agent.
+``hybrid_search`` is the public retrieve path (MCP uses it); ``search_entries`` is the
+BM25-only path kept internally usable. Tag/type pre-filters are applied to BOTH legs (via
+the shared ``prefilter`` helpers) so a filtered entry never appears in either leg or the
+fused result. Decoupled from transport so REST (future) and MCP share one implementation.
 """
 
 import re
 import sqlite3
+
+from brain2.services.prefilter import entry_ids_with_all_tags
+from brain2.services.providers.embedder import Embedder
+from brain2.services.vector import vector_search
+
+# Reciprocal Rank Fusion constant (spec §11: RRF score = Σ 1/(k + rank), k=60).
+_RRF_K = 60
 
 # Default page size for retrieve (spec §10).
 _DEFAULT_LIMIT = 10
@@ -49,21 +60,6 @@ def _like_clause(token: str) -> tuple[str, list[str]]:
     return clause, [pattern] * len(cols)
 
 
-def _matching_entry_ids_by_tags(conn: sqlite3.Connection, tags: list[str]) -> set[str]:
-    """Entry ids that carry ALL of the given tags (conjunctive pre-filter)."""
-    placeholders = ",".join("?" for _ in tags)
-    rows = conn.execute(
-        f"""
-        SELECT entry_id FROM entry_tags
-         WHERE tag IN ({placeholders})
-         GROUP BY entry_id
-        HAVING COUNT(DISTINCT tag) = ?
-        """,
-        (*tags, len(tags)),
-    ).fetchall()
-    return {row[0] for row in rows}
-
-
 def _tags_for(conn: sqlite3.Connection, entry_id: str) -> list[str]:
     """Tags attached to an entry, for the compact result shape."""
     rows = conn.execute(
@@ -92,6 +88,9 @@ def search_entries(
         A list of compact result dicts (spec §10): ``id, url, title, tags, note,
         content, type, saved_at, score``, ordered best-first.
     """
+    # Defensive guard: a negative limit becomes SQLite 'LIMIT -1' (unbounded).
+    if limit < 0:
+        raise ValueError("limit must be >= 0")
     tokens = _TOKEN_RE.findall(query)
     if not tokens:
         return []
@@ -101,7 +100,7 @@ def search_entries(
     # Tag pre-filter: resolve the allowed id set first; an empty set means no match.
     allowed_ids: set[str] | None = None
     if tags:
-        allowed_ids = _matching_entry_ids_by_tags(conn, tags)
+        allowed_ids = entry_ids_with_all_tags(conn, tags)
         if not allowed_ids:
             return []
 
@@ -156,3 +155,77 @@ def search_entries(
         }
         for row in rows
     ]
+
+
+# Candidate pool per leg before fusion. We over-fetch beyond the final ``limit`` so an
+# entry ranked modestly in one leg can still surface via the other under RRF.
+_CANDIDATE_POOL = 50
+
+
+def _rrf_scores(ranked_ids: list[str]) -> dict[str, float]:
+    """RRF contribution of one ranked leg: 1/(k + rank), rank starting at 1 (spec §11)."""
+    return {entry_id: 1.0 / (_RRF_K + rank) for rank, entry_id in enumerate(ranked_ids, start=1)}
+
+
+def _project_entry(conn: sqlite3.Connection, entry_id: str, score: float) -> dict:
+    """Build the compact spec §10 result row for an entry id."""
+    row = conn.execute(
+        "SELECT id, url, title, note, content, type, saved_at FROM entries WHERE id = ?",
+        (entry_id,),
+    ).fetchone()
+    return {
+        "id": row["id"],
+        "url": row["url"],
+        "title": row["title"],
+        "tags": _tags_for(conn, row["id"]),
+        "note": row["note"],
+        "content": row["content"],
+        "type": row["type"],
+        "saved_at": row["saved_at"],
+        "score": score,
+    }
+
+
+def hybrid_search(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    embedder: Embedder,
+    tags: list[str] | None = None,
+    type: str | None = None,
+    limit: int = _DEFAULT_LIMIT,
+) -> list[dict]:
+    """Hybrid BM25 + vector retrieval fused with RRF (spec §10 retrieve, §11).
+
+    Set A (BM25) and set B (vector KNN over the note embedding) are each ranked under the
+    SAME tag/type pre-filters, then fused: ``score = Σ 1/(k + rank_i)`` with ``k=60``.
+    Returns the compact §10 result shape ordered by fused score (default limit 10). An
+    empty/whitespace query (no searchable tokens) returns ``[]``.
+    """
+    # Defensive guard: a negative limit would slice the fused list oddly (ordered[:-n]).
+    if limit < 0:
+        raise ValueError("limit must be >= 0")
+    # No searchable tokens -> nothing to rank lexically or to embed meaningfully.
+    if not _TOKEN_RE.findall(query):
+        return []
+
+    # Set A: BM25 ranked ids (over-fetched). search_entries already applies the same
+    # tag/type pre-filters, so we reuse it rather than duplicating the BM25 path (DRY).
+    bm25_ids = [
+        r["id"]
+        for r in search_entries(conn, query, tags=tags, type=type, limit=_CANDIDATE_POOL)
+    ]
+    # Set B: vector ranked ids under the identical pre-filters.
+    vector_ids = vector_search(
+        conn, embedder.embed(query), tags=tags, type=type, limit=_CANDIDATE_POOL
+    )
+
+    # Fuse: sum each leg's RRF contribution per id.
+    fused: dict[str, float] = {}
+    for leg in (_rrf_scores(bm25_ids), _rrf_scores(vector_ids)):
+        for entry_id, score in leg.items():
+            fused[entry_id] = fused.get(entry_id, 0.0) + score
+
+    # Order by fused score (desc); ties broken by id for deterministic output.
+    ordered = sorted(fused.items(), key=lambda kv: (-kv[1], kv[0]))
+    return [_project_entry(conn, entry_id, score) for entry_id, score in ordered[:limit]]

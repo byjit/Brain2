@@ -24,8 +24,10 @@ from brain2.services.providers.factory import build_providers
 from brain2.db.connection import open_user_db
 from brain2.services.fts import index_entry
 from brain2.services.note_resolver import resolve_note
+from brain2.services.providers.embedder import Embedder
 from brain2.services.providers.page_fetcher import PageFetcher
 from brain2.services.providers.summarizer import Summarizer
+from brain2.services.vector import index_entry_vector
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,14 @@ _CLAIMABLE = ("pending", "failed")
 # that crashed mid-pipeline; it is reset to ``pending`` on startup so it is reprocessed
 # instead of becoming a silent black hole (spec §7.4).
 _STALE_PROCESSING_LEASE_SECONDS = 600
+
+# Upper bound on characters sent to the embedder. The embedding API has an input token
+# limit, so a very large note (tens of KB) would fail to embed on every attempt and turn
+# an otherwise-valid entry into a permanent failure. We embed a bounded prefix instead so
+# the entry still gets a (representative) semantic vector and stays activatable; FTS still
+# indexes the full content (spec §7.4 no silent black hole). ~8k chars stays comfortably
+# under the model's token budget while capturing the note's gist.
+_EMBED_INPUT_MAX_CHARS = 8_000
 
 
 def _now() -> datetime:
@@ -59,6 +69,7 @@ def process_entry(
     *,
     fetcher: PageFetcher,
     summarizer: Summarizer,
+    embedder: Embedder | None = None,
     max_attempts: int | None = None,
 ) -> bool:
     """Process a single entry. Returns True if it was claimed and run, else False.
@@ -66,6 +77,11 @@ def process_entry(
     Idempotent and safe to re-run: only ``pending``/``failed`` entries below the retry
     ceiling are claimed (atomically flipped to ``processing`` so a concurrent run cannot
     pick the same row). ``active``/``processing`` rows are skipped.
+
+    When an ``embedder`` is provided, the resolved note is embedded and upserted into
+    ``entries_vec`` (clearing any prior vector) so the vector half of retrieval is in
+    lockstep with the note (spec §7.1 step 8). The production loop always supplies one;
+    it is optional only so note-only unit tests need not wire an embedder.
     """
     ceiling = max_attempts if max_attempts is not None else get_settings().worker_max_attempts
 
@@ -115,6 +131,14 @@ def process_entry(
             "select title, content from entries where id = ?", (entry_id,)
         ).fetchone()
         index_entry(conn, entry_id, effective["title"], effective["content"])
+        # Embed the NOTE (not the body) into entries_vec for semantic search (spec §11);
+        # delete-then-insert keeps exactly one vector per entry across re-enrichment.
+        if embedder is not None:
+            # Bound the embedder input so an oversized note cannot fail every attempt and
+            # block activation; FTS above already indexed the full content.
+            index_entry_vector(
+                conn, entry_id, embedder.embed(resolved.note[:_EMBED_INPUT_MAX_CHARS])
+            )
         conn.commit()
         return True
     except Exception as exc:  # noqa: BLE001 — any provider error is a processing failure
@@ -157,6 +181,7 @@ def process_pending(
     *,
     fetcher: PageFetcher,
     summarizer: Summarizer,
+    embedder: Embedder | None = None,
     max_attempts: int | None = None,
 ) -> int:
     """Drain all claimable entries in one DB. Returns the number successfully activated."""
@@ -175,7 +200,10 @@ def process_pending(
     ]
     activated = 0
     for entry_id in ids:
-        process_entry(conn, entry_id, fetcher=fetcher, summarizer=summarizer, max_attempts=ceiling)
+        process_entry(
+            conn, entry_id, fetcher=fetcher, summarizer=summarizer,
+            embedder=embedder, max_attempts=ceiling,
+        )
         row = conn.execute("select status from entries where id = ?", (entry_id,)).fetchone()
         if row["status"] == "active":
             activated += 1
@@ -210,6 +238,7 @@ def drain_all_users(
     *,
     fetcher: PageFetcher,
     summarizer: Summarizer,
+    embedder: Embedder | None = None,
     max_attempts: int | None = None,
 ) -> int:
     """Scan every ``{user_id}.db`` under ``data_dir`` and drain its queue (spec §6, §7.1).
@@ -228,7 +257,8 @@ def drain_all_users(
             with open_user_db(user_id, data_dir=data_dir) as conn:
                 reset_stale_processing(conn)
                 total += process_pending(
-                    conn, fetcher=fetcher, summarizer=summarizer, max_attempts=max_attempts
+                    conn, fetcher=fetcher, summarizer=summarizer,
+                    embedder=embedder, max_attempts=max_attempts,
                 )
         except Exception:  # noqa: BLE001 — one bad DB must not abort the whole drain
             logger.exception("Failed to drain user DB %s; skipping", user_id)
@@ -244,11 +274,15 @@ async def run_worker_loop(*, poll_interval: float = 10.0) -> None:
     cleanly when the surrounding task is cancelled at shutdown.
     """
     settings = get_settings()
-    summarizer, fetcher = build_providers(settings)
+    summarizer, fetcher, embedder = build_providers(settings)
     while True:
         try:
             await asyncio.to_thread(
-                drain_all_users, settings.data_dir, fetcher=fetcher, summarizer=summarizer
+                drain_all_users,
+                settings.data_dir,
+                fetcher=fetcher,
+                summarizer=summarizer,
+                embedder=embedder,
             )
         except asyncio.CancelledError:
             # Graceful shutdown: stop draining and let the task unwind.

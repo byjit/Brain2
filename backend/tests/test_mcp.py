@@ -14,11 +14,18 @@ from brain2.mcp.tools import retrieve_tool, save_tool
 
 @pytest.fixture(autouse=True)
 def temp_data_dir(tmp_path, monkeypatch):
-    """Point per-user DB routing at a temp dir so tests never touch ./data."""
+    """Point per-user DB routing at a temp dir so tests never touch ./data.
+
+    Also blank GEMINI_API_KEY so retrieve's hybrid leg wires the offline FakeEmbedder
+    (the factory selects real-vs-fake by config) — tests never hit the network. The env
+    var is set to "" (not unset) so it overrides the repo-root .env, which pydantic
+    would otherwise still read.
+    """
     from brain2.config import get_settings
 
     get_settings.cache_clear()
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("GEMINI_API_KEY", "")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -103,3 +110,13 @@ def test_save_note_override_populates_note_column_for_page():
 def test_retrieve_outside_user_scope_raises():
     with pytest.raises(PermissionError):
         retrieve_tool(query="anything")
+
+
+def test_retrieve_negative_limit_rejected_with_clear_error():
+    # A negative limit otherwise reaches vec0 KNN (raw OperationalError) on one leg and
+    # becomes unbounded LIMIT -1 on the other; reject it at the boundary instead.
+    from brain2.config import get_settings
+
+    with auth.user_scope(get_settings().dev_user_id):
+        with pytest.raises(ValueError, match="limit must be >= 0"):
+            retrieve_tool(query="anything", limit=-1)

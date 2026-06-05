@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     gemini_summary_model: str = Field(
         default="gemini-3.5-flash", description="Gemini model id for note summarization"
     )
+    # Embedding model for the note/tag-description vectors (spec §9.2 768-dim, M4+).
+    gemini_embedding_model: str = Field(
+        default="gemini-embedding-001", description="Gemini model id for embeddings"
+    )
     worker_max_attempts: int = Field(
         default=3, description="Retry ceiling before an entry is marked failed"
     )

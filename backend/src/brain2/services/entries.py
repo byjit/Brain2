@@ -13,7 +13,9 @@ from nanoid import generate
 from brain2.models.entries import CreateEntryRequest, EntryType, SaveEntryResponse, SaveStatus
 from brain2.services.content import persisted_content
 from brain2.services.fts import index_entry, remove_entry
+from brain2.services.providers.embedder import Embedder
 from brain2.services.url_normalize import normalize_url
+from brain2.services.vector import index_entry_vector, remove_entry_vector
 
 # note_source provenance (spec §7.3): a user-typed note is authored; everything else
 # starts from the page body until the async ladder resolves a better source.
@@ -32,11 +34,21 @@ def _find_by_normalized_url(conn: sqlite3.Connection, url: str) -> str | None:
     return row[0] if row else None
 
 
-def save_entry(conn: sqlite3.Connection, req: CreateEntryRequest) -> SaveEntryResponse:
+def save_entry(
+    conn: sqlite3.Connection,
+    req: CreateEntryRequest,
+    *,
+    embedder: Embedder | None = None,
+) -> SaveEntryResponse:
     """Upsert an entry and return its id and save status.
 
     - type=note: never dedups (no URL); its text is the note authored by the user.
     - other types: dedup by normalized URL — update if present, else insert pending.
+
+    When ``embedder`` is supplied and an existing URL is re-saved WITH a changed note
+    override, the note vector is refreshed in lockstep with FTS so the two retrieval legs
+    never diverge (spec §7.1 clear/replace invariant). It is optional so the insert path
+    and override-free updates need no provider wiring.
     """
     normalized = normalize_url(req.url)
     content = persisted_content(req.type.value, req.captured_text)
@@ -50,7 +62,7 @@ def save_entry(conn: sqlite3.Connection, req: CreateEntryRequest) -> SaveEntryRe
     )
 
     if existing_id:
-        return _update_existing(conn, existing_id, req, content, now)
+        return _update_existing(conn, existing_id, req, content, now, embedder=embedder)
 
     entry_id = generate()
     note, note_source = _note_for_insert(req)
@@ -88,7 +100,7 @@ def save_entry(conn: sqlite3.Connection, req: CreateEntryRequest) -> SaveEntryRe
         raced_id = _find_by_normalized_url(conn, normalized)
         if raced_id is None:
             raise  # not the URL-dedup conflict we expected; do not mask it
-        return _update_existing(conn, raced_id, req, content, now)
+        return _update_existing(conn, raced_id, req, content, now, embedder=embedder)
 
     index_entry(conn, entry_id, req.title, content)
     conn.commit()
@@ -116,6 +128,8 @@ def _update_existing(
     req: CreateEntryRequest,
     content: str | None,
     now: str,
+    *,
+    embedder: Embedder | None = None,
 ) -> SaveEntryResponse:
     """Non-destructive update of an existing URL-backed entry (spec §10).
 
@@ -123,6 +137,10 @@ def _update_existing(
     save (e.g. a page) never nulls content that already holds the only copy of a
     clip/note. An explicit ``note`` override (spec §10) is written through with
     note_source='user' so it survives and is reflected back in retrieve.
+
+    When the request carries a note override and an ``embedder`` is supplied, the note
+    vector is re-indexed alongside FTS so both retrieval legs reflect the new note (spec
+    §7.1 clear/replace invariant); otherwise the vector is left untouched.
     """
     conn.execute(
         """
@@ -153,22 +171,28 @@ def _update_existing(
     # Re-index from the effective (post-COALESCE) row so the FTS index reflects
     # what is actually stored, not just the fields this request supplied.
     effective = conn.execute(
-        "select title, content from entries where id = ?", (existing_id,)
+        "select title, content, note from entries where id = ?", (existing_id,)
     ).fetchone()
     index_entry(conn, existing_id, effective["title"], effective["content"])
+    # A note override changes the vectorized field, so re-embed in lockstep with FTS to
+    # keep the two legs consistent (spec §7.1). Scoped to the override case so an
+    # override-free re-save of an active entry does not blindly re-embed (spec §10).
+    if req.note is not None and embedder is not None:
+        index_entry_vector(conn, existing_id, embedder.embed(effective["note"]))
     conn.commit()
     return SaveEntryResponse(id=existing_id, status=SaveStatus.UPDATED)
 
 
 def delete_entry(conn: sqlite3.Connection, entry_id: str) -> bool:
-    """Delete an entry and its derived FTS row (spec §10 delete).
+    """Delete an entry and its derived FTS row + note vector (spec §10 delete).
 
     Returns True if a row was removed. ``entry_tags`` rows cascade via the schema
-    FK; tag-count/vector cleanup arrives with those features in later milestones.
+    FK; tag-count cleanup arrives with auto-tagging in M5.
     """
     cursor = conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
     if cursor.rowcount == 0:
         return False
     remove_entry(conn, entry_id)
+    remove_entry_vector(conn, entry_id)
     conn.commit()
     return True

@@ -107,6 +107,13 @@ def test_empty_query_returns_empty(conn):
     assert search_entries(conn, "   ") == []
 
 
+def test_negative_limit_raises_clear_error(conn):
+    # A negative limit becomes SQLite 'LIMIT -1' (unbounded); guard it instead.
+    save_entry(conn, CreateEntryRequest(type="note", captured_text="rust"))
+    with pytest.raises(ValueError, match="limit must be >= 0"):
+        search_entries(conn, "rust", limit=-1)
+
+
 def test_note_less_hit_surfaces_matched_content(conn):
     # Pre-enrichment (M2) a clip's body lives in content while note stays NULL until
     # summarization (M5). The hit must still carry the readable body it matched on,

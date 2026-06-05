@@ -6,6 +6,7 @@ No network/Gemini calls are made here — we only assert which type is wired.
 """
 
 from brain2.config import Settings
+from brain2.services.providers.embedder import FakeEmbedder, GeminiEmbedder
 from brain2.services.providers.factory import build_providers
 from brain2.services.providers.page_fetcher import FakePageFetcher, HttpxPageFetcher
 from brain2.services.providers.summarizer import FakeSummarizer, GeminiSummarizer
@@ -13,13 +14,15 @@ from brain2.services.providers.summarizer import FakeSummarizer, GeminiSummarize
 
 def test_no_api_key_yields_fakes():
     settings = Settings(gemini_api_key=None)
-    summarizer, fetcher = build_providers(settings)
+    summarizer, fetcher, embedder = build_providers(settings)
     assert isinstance(summarizer, FakeSummarizer)
     assert isinstance(fetcher, FakePageFetcher)
+    assert isinstance(embedder, FakeEmbedder)
 
 
 def test_api_key_yields_real_providers():
     settings = Settings(gemini_api_key="fake-key-for-wiring", gemini_summary_model="gemini-3.5-flash")
-    summarizer, fetcher = build_providers(settings)
+    summarizer, fetcher, embedder = build_providers(settings)
     assert isinstance(summarizer, GeminiSummarizer)
     assert isinstance(fetcher, HttpxPageFetcher)
+    assert isinstance(embedder, GeminiEmbedder)

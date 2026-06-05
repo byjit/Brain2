@@ -58,6 +58,46 @@ def test_update_rewrites_fts_row_in_lockstep(conn):
     assert count == 1
 
 
+def test_note_override_on_resave_reembeds_in_lockstep(conn):
+    # Re-saving a URL with a changed note override must move the FTS and vector legs
+    # together: the stale note vector cannot survive while FTS reflects the new note,
+    # or hybrid_search fuses inconsistent signals (spec §7.1 clear/replace invariant).
+    from brain2.services.providers.embedder import FakeEmbedder
+    from brain2.services.vector import index_entry_vector, vector_search
+
+    embedder = FakeEmbedder()
+    first = save_entry(
+        conn,
+        CreateEntryRequest(type="page", url="https://ex.com/note", note="kubernetes networking guide"),
+        embedder=embedder,
+    )
+    # Simulate the worker having embedded the original note (the insert path defers
+    # embedding to the async worker; the update path is what this finding fixes).
+    index_entry_vector(conn, first.id, embedder.embed("kubernetes networking guide"))
+    conn.commit()
+    assert vector_search(conn, embedder.embed("kubernetes networking"))[:1] == [first.id]
+
+    # Re-save with a completely different note override.
+    save_entry(
+        conn,
+        CreateEntryRequest(type="page", url="https://ex.com/note", note="rust async http client"),
+        embedder=embedder,
+    )
+    # Exactly one vector row, and it now reflects the NEW note: a query for the new
+    # terms must surface it as the nearest match (the stale vector did not survive).
+    assert conn.execute(
+        "select count(*) from entries_vec where id = ?", (first.id,)
+    ).fetchone()[0] == 1
+    assert vector_search(conn, embedder.embed("rust async http"))[:1] == [first.id]
+
+
+def test_resave_without_note_override_does_not_require_embedder(conn):
+    # A plain re-save (no note change) must not blow up when no embedder is supplied.
+    save_entry(conn, CreateEntryRequest(type="page", url="https://ex.com/plain", title="A"))
+    res = save_entry(conn, CreateEntryRequest(type="page", url="https://ex.com/plain", title="B"))
+    assert res.status.value == "updated"
+
+
 def test_delete_removes_fts_row(conn):
     res = save_entry(conn, CreateEntryRequest(type="note", captured_text="to be deleted"))
     assert _fts_row(conn, res.id) is not None
@@ -70,6 +110,25 @@ def test_delete_removes_fts_row(conn):
 
 def test_delete_missing_entry_returns_false(conn):
     assert delete_entry(conn, "does-not-exist") is False
+
+
+def test_delete_removes_entry_vector(conn):
+    # The entry's note vector must be removed on delete (spec §10 delete: remove the
+    # entry vector along with the FTS row and tag edges).
+    from brain2.services.providers.embedder import FakeEmbedder
+    from brain2.services.vector import index_entry_vector
+
+    res = save_entry(conn, CreateEntryRequest(type="note", captured_text="vectorized note"))
+    index_entry_vector(conn, res.id, FakeEmbedder().embed("vectorized note"))
+    conn.commit()
+    assert conn.execute(
+        "select count(*) from entries_vec where id = ?", (res.id,)
+    ).fetchone()[0] == 1
+
+    delete_entry(conn, res.id)
+    assert conn.execute(
+        "select count(*) from entries_vec where id = ?", (res.id,)
+    ).fetchone()[0] == 0
 
 
 def test_concurrent_first_save_of_same_url_converges_to_update(conn, monkeypatch):

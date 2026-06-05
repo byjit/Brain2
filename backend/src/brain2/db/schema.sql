@@ -67,10 +67,13 @@ CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
   tokenize = 'trigram'
 );
 
--- Semantic search over the note
+-- Semantic search over the note. distance_metric=cosine so KNN ranks by semantic
+-- direction (spec §11 "catches paraphrase", §7.2 cosine threshold) rather than the
+-- default L2/Euclidean, which mis-ranks any un-normalized vector. Declared pre-data so
+-- no migration is needed.
 CREATE VIRTUAL TABLE IF NOT EXISTS entries_vec USING vec0(
   id        TEXT PRIMARY KEY,
-  embedding FLOAT[768]
+  embedding FLOAT[768] distance_metric=cosine
 );
 
 -- Semantic + dedup over tag descriptions (the tag embedding layer)
