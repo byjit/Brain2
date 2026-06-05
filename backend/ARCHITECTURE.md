@@ -14,7 +14,17 @@ backend/
 ├── src/brain2/
 │   ├── main.py               # FastAPI app factory (create_app) + module-level `app`
 │   ├── config.py             # pydantic-settings; reads repo-root ../.env; get_settings()
-│   ├── deps.py               # FastAPI deps: get_current_user (stub) + get_db
+│   ├── deps.py               # FastAPI deps: get_current_user (Bearer auth) + get_db
+│   ├── auth/                 # M7 hybrid auth (spec §12): central credential->user_id routing
+│   │   ├── store.py          # auth.db connection (WAL) + schema; mirrors db/connection.py
+│   │   ├── schema.sql        # users, api_keys, oauth_codes (central store, gitignored)
+│   │   ├── users.py          # upsert_by_google_sub + implicit signup ({user_id}.db creation)
+│   │   ├── api_keys.py       # Personal Access Tokens: SHA-256 hash, constant-time verify, revoke
+│   │   ├── jwt_service.py    # Brain2 access/session JWTs (HS256, exp + alg pinned) via pyjwt
+│   │   ├── oauth_codes.py    # single-use, short-lived PKCE S256 authorization codes
+│   │   ├── bearer.py         # the one credential->user_id router (API key OR JWT)
+│   │   ├── deps.py           # get_auth_db + get_session_user (session cookie OR Bearer)
+│   │   └── providers/identity.py # IdentityProvider Protocol; Google + Fake + factory
 │   ├── db/
 │   │   ├── connection.py     # open_user_db / user_db_path; WAL + sqlite-vec + schema
 │   │   ├── migrations.py     # apply_schema: idempotent schema runner
@@ -49,7 +59,9 @@ backend/
 │   │   ├── tools.py          # transport-free save/retrieve/delete/get_tags tool logic (reuses services)
 │   │   └── server.py         # FastMCP server (streamable HTTP) exposing all four spec §10 tools
 │   └── api/
-│       └── entries.py        # POST /entries + GET /entries/failed + PATCH /entries/{id} repair
+│       ├── entries.py        # POST /entries + GET /entries/failed + PATCH /entries/{id} repair
+│       ├── auth.py           # /auth/login,callback,me,logout + /oauth/authorize,token (PKCE)
+│       └── settings_tokens.py # /settings/tokens CRUD (Personal Access Tokens, spec §12)
 └── tests/                    # pytest; conftest wires a TestClient to a tmp DATA_DIR
 ```
 
@@ -59,6 +71,10 @@ backend/
   above `backend/`) via pydantic-settings. Holds `DATA_DIR` (default `<repo>/data/users`,
   gitignored), a `dev_user_id` stub, and optional placeholders for `GEMINI_API_KEY`,
   `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`. Secrets are read from env, never hardcoded.
+  The M7 auth knobs (spec §12) are also here: `auth_db_path` (default `{DATA_DIR}/../auth.db`),
+  `jwt_secret` (HS256 signing secret — set in prod), the `access_token_ttl` / `session_ttl` /
+  `auth_code_ttl`, the `oauth_redirect_uris` exact allowlist, `dashboard_url`, and
+  `cookie_secure`. None are ever logged or returned.
   Also holds the worker knobs: `gemini_summary_model` (default `gemini-3.5-flash` — the
   current Flash model per the gemini-api-dev skill, used for both summarization and the M5
   combined tagging call; the M4 embedding model is `gemini-embedding-001` at 768-dim) and
@@ -79,8 +95,12 @@ backend/
   vec0 tables are `entries_vec` / `tags_vec` at `FLOAT[768]`, both `distance_metric=cosine`
   (so the M5 canonicalize snap is a true cosine threshold and KNN ranks by direction).
 
-- **deps.py** — `get_current_user()` is the auth stub returning `settings.dev_user_id`
-  (real auth is M7). `get_db()` depends on it and yields the user's connection per request.
+- **deps.py** — `get_current_user()` is the **Bearer auth dependency** (M7, spec §12): it
+  reads `Authorization: Bearer`, opens the central `auth.db`, and resolves the credential
+  (API key OR Brain2 JWT) to a `user_id` via `auth.bearer.resolve_bearer`, raising 401 on
+  missing/invalid/expired/revoked. `get_db()` depends on it and yields that user's
+  `{user_id}.db` connection per request. Tests inject a known user via the dependency
+  override seam (conftest), so the suite stays offline.
 
 - **services/** — Pure, framework-free logic so it is unit-testable without HTTP:
   - `url_normalize.normalize_url` — lowercase scheme/host, drop fragment, strip `utm_*`
@@ -261,10 +281,11 @@ backend/
     continues on an unexpected cycle error, cancels cleanly).
 
 - **mcp/** — The MCP server, mounted into FastAPI (spec §10):
-  - `auth.resolve_token_to_user_id` — maps a `Bearer <token>` header to a `user_id`.
-    M2 stub: any well-formed token resolves to `settings.dev_user_id` (real API-key/JWT
-    validation is M7), so per-user DB routing already flows through MCP. `user_scope` /
-    `current_user_id` bind the resolved user in a `ContextVar` for the request.
+  - `auth.resolve_token_to_user_id` — maps a `Bearer <token>` header to a `user_id` by
+    opening `auth.db` and routing through `auth.bearer.resolve_bearer` (API key OR Brain2
+    JWT), returning None for an invalid/expired/revoked credential (M7, spec §10/§12). All
+    four tools reject unauthenticated calls. `user_scope` / `current_user_id` bind the
+    resolved user in a `ContextVar` for the request.
   - `tools.{save,retrieve,delete,get_tags}_tool` — transport-free tool logic. They resolve
     the current user, open that user's DB, and **delegate to the shared services** so REST
     and MCP have one implementation (DRY): `save_tool`→`save_entry` (+ `apply_agent_tags`
@@ -302,6 +323,62 @@ backend/
   `enable_worker=False` (they drive a tmp `DATA_DIR` through dependency overrides, so the
   loop — which scans the real configured `DATA_DIR` — must stay off).
 
+- **auth/ (M7, spec §12) — hybrid auth + central credential→user routing.** Because a
+  credential must resolve to a `user_id` *before* any per-user DB can open, a single
+  central `auth.db` (path from config, default `{DATA_DIR}/../auth.db` — one level ABOVE
+  the user-DB dir so the worker's `{user_id}.db` glob never opens it; gitignored) holds
+  identities and credentials. Connections mirror `db/connection.py` (WAL, FK, busy
+  timeout, idempotent schema). Modules, each single-responsibility:
+  - `store.open_auth_db` + `schema.sql` — `users(user_id PK nanoid, google_sub UNIQUE,
+    email, created_at)`, `api_keys(id, user_id FK, token_hash UNIQUE, prefix, name,
+    created_at, last_used_at, revoked_at)`, and `oauth_codes(code PK, user_id, code_challenge,
+    method, redirect_uri, expires_at, consumed_at)`.
+  - `api_keys` — Personal Access Tokens for CLI/Desktop. Generates `br2_live_…` via
+    `secrets.token_urlsafe`, returns the raw key ONCE, stores only its SHA-256 hash + a
+    short non-secret display prefix; `verify_key` hashes the presented key, constant-time
+    compares (`hmac.compare_digest`), rejects revoked, and bumps `last_used_at`; `revoke_key`
+    is owner-scoped; `list_keys` never returns the secret or hash.
+  - `jwt_service` — Brain2 access + session tokens via **pyjwt** (HS256, config secret),
+    carrying `sub`=user_id + `exp`. `verify_token` PINS the algorithm (rejects `alg:none`/
+    confusion) and REQUIRES `exp` + `sub`, returning the `sub` or None.
+  - `oauth_codes` — OAuth 2.1 authorization codes bound to the S256 `code_challenge` +
+    `redirect_uri`. `issue_code` mints a single-use, short-lived code; `consume_code`
+    verifies (unknown/consumed/expired/redirect-mismatch/wrong-verifier all → None) then
+    atomically marks consumed (guarded on `consumed_at IS NULL`) so a replay loses. Only
+    S256 is accepted (`plain` rejected). `verify_pkce_s256` is constant-time.
+  - `bearer.resolve_bearer` — THE one place the two credential types converge: parse the
+    `Bearer` value; if it has the `br2_live_` prefix validate against `api_keys`, else
+    validate as a Brain2 JWT; return the `user_id` (caller opens `{user_id}.db`) or None.
+    Used by both `deps.get_current_user` (REST) and `mcp.auth` (MCP) so the rule is shared.
+  - `users.upsert_by_google_sub` — implicit first-time signup: a new `google_sub` inserts a
+    `users` row with a fresh **nanoid** `user_id` (server-generated, never client-supplied →
+    path-safe for `{user_id}.db`) AND creates `{user_id}.db` (runs the per-user schema); a
+    returning `google_sub` maps to the same `user_id`.
+  - `providers/identity` — `IdentityProvider` Protocol; `GoogleIdentityProvider` exchanges
+    the auth code at Google's token endpoint and verifies the id_token via tokeninfo (httpx);
+    `FakeIdentityProvider` returns canned identities so the whole auth suite runs OFFLINE
+    (no test contacts Google); `build_identity_provider(settings)` selects real-vs-fake by
+    the presence of `google_client_id`/`secret`, mirroring `factory.build_providers`.
+  - `auth/deps` — `get_auth_db` (per-request auth.db conn) + `get_session_user` (resolves the
+    dashboard user from the httpOnly session-cookie JWT OR a Bearer credential).
+
+- **api/auth.py + api/settings_tokens.py — the auth HTTP surface (spec §6/§12).**
+  - Google Sign-In: `GET /auth/login` → redirect to Google consent with a signed,
+    short-lived CSRF `state` (a purpose-pinned JWT); `GET /auth/callback` → verify state,
+    exchange the code via the identity provider, `upsert_by_google_sub` (implicit signup),
+    set the httpOnly + Secure + SameSite=Lax session cookie, redirect to the dashboard;
+    `GET /auth/me` (current user); `POST /auth/logout` (clear cookie).
+  - OAuth 2.1 + PKCE (web MCP clients + extension), authorization_code + S256 ONLY (YAGNI —
+    no refresh rotation / extra grants): `GET /oauth/authorize` requires a logged-in Google
+    session, validates `redirect_uri` against the EXACT config allowlist (no substring/open
+    redirect), requires `response_type=code` + S256 `code_challenge` + `state`, issues a
+    PKCE-bound single-use code, redirects back with `code` + echoed `state`; `POST
+    /oauth/token` consumes the code, verifies the `code_verifier`, and issues a short-lived
+    Brain2 access token (`{access_token, token_type:Bearer, expires_in}`).
+  - `/settings/tokens` (session/Bearer authed): `POST {name}` → `{id, api_key (once), prefix}`;
+    `GET` → list without the secret; `DELETE /{id}` → owner-scoped revoke. Backs the
+    dashboard token UI.
+
 ## MCP transport (spec §6 divergence)
 
 The spec §6 diagram names an SSE transport (`GET /mcp/sse`, `POST /mcp/msg`). We instead
@@ -311,7 +388,9 @@ with JSON responses (`stateless_http=True, json_response=True`) so it scales hor
 with no server-side session affinity. The single endpoint is `POST /mcp/mcp`. DNS-rebinding
 protection (Host/Origin allow-list) is left on by default for production; `create_app` and
 `build_mcp_server` accept a `transport_security` override so in-process ASGI tests can relax
-it. Auth is a Bearer-token check today (M2 stub → dev user); full OAuth 2.1 + API keys is M7.
+it. Auth (M7, spec §12) resolves the request's `Bearer` credential — a Personal Access Token
+(API key) or a Brain2 access token (OAuth 2.1 + PKCE / session JWT) — to a `user_id` via the
+central `auth.db`, rejecting unauthenticated calls.
 
 ## Conventions
 
@@ -335,6 +414,14 @@ it. Auth is a Bearer-token check today (M2 stub → dev user); full OAuth 2.1 + 
   assert real behavior.
 - **Per-user isolation.** All DB access flows through `get_db` so routing to
   `{user_id}.db` is centralized; never open ad-hoc connections in routes/services.
+- **Auth (M7, spec §12).** Every REST entry endpoint and all four MCP tools authenticate a
+  `Bearer` credential and resolve it to a `user_id` via the central `auth.db` BEFORE the
+  per-user DB opens. Store ONLY SHA-256 hashes of API keys (never the raw key; shown once);
+  verify with constant-time compare. JWTs pin the algorithm and require `exp`. PKCE is S256
+  only; `redirect_uri` is matched against an exact allowlist; auth codes are single-use,
+  short-lived, and challenge-bound. The `user_id` is a server-generated nanoid so
+  `{user_id}.db` can't be path-traversed. Google + all external calls sit behind
+  `IdentityProvider` with a fake, so the entire suite runs offline (no test contacts Google).
 - **Async enrichment.** New entries are `pending`; the worker resolves the note basis
   (fallback ladder), records `note_source`, re-indexes FTS, embeds the **note** into
   `entries_vec` (M4), and sets `active`. Keep the sync save path under 2s.

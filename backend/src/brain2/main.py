@@ -14,7 +14,8 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI
 from mcp.server.transport_security import TransportSecuritySettings
 
-from brain2.api import entries
+from brain2.api import auth as auth_api
+from brain2.api import entries, settings_tokens
 from brain2.mcp.server import build_mcp_server
 from brain2.services.worker import run_worker_loop
 
@@ -66,6 +67,8 @@ def create_app(
         return {"status": "ok"}
 
     app.include_router(entries.router)
+    app.include_router(auth_api.router)
+    app.include_router(settings_tokens.router)
     # Mount the MCP ASGI app; tools live at ``{MCP_MOUNT}/mcp``.
     app.mount(MCP_MOUNT, mcp_app)
     return app

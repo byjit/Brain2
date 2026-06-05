@@ -1,37 +1,34 @@
-"""MCP request authentication and per-request user routing.
+"""MCP request authentication and per-request user routing (spec §12).
 
 A Bearer token on the MCP HTTP request is resolved to a ``user_id`` and held in a
 ``ContextVar`` for the duration of the request, so tool functions can open the right
-per-user DB without threading the user through every call. Token validation is a stub
-that reuses ``get_current_user``'s dev user (real OAuth/API-key validation is M7).
+per-user DB without threading the user through every call. Resolution routes an API key
+or a Brain2 access token through the central ``auth.db`` (M7), replacing the M2 dev stub.
 """
 
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
+from brain2.auth import bearer
+from brain2.auth.store import open_auth_db
 from brain2.config import get_settings
 
 # The resolved user id for the in-flight MCP request (None outside a request).
 _current_user: ContextVar[str | None] = ContextVar("mcp_current_user", default=None)
 
-_BEARER_PREFIX = "bearer "
-
 
 def resolve_token_to_user_id(authorization_header: str | None) -> str | None:
-    """Resolve an ``Authorization`` header value to a user id, or None if invalid.
+    """Resolve an ``Authorization`` header to a user id, or None if invalid (spec §12).
 
-    M2 stub: any well-formed ``Bearer <token>`` maps to the dev user so per-user DB
-    routing already flows through MCP. M7 replaces this with real API-key/JWT lookup.
+    Routes an API key (``br2_live_`` prefix) or a Brain2 access token through auth.db. All
+    four MCP tools require a valid Bearer credential (spec §10).
     """
-    if not authorization_header:
-        return None
-    if not authorization_header.lower().startswith(_BEARER_PREFIX):
-        return None
-    token = authorization_header[len(_BEARER_PREFIX):].strip()
-    if not token:
-        return None
-    return get_settings().dev_user_id
+    settings = get_settings()
+    with open_auth_db(settings.auth_db_path) as conn:
+        return bearer.resolve_bearer(
+            authorization_header, conn=conn, secret=settings.jwt_secret
+        )
 
 
 @contextmanager

@@ -14,6 +14,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # backend/src/brain2/config.py -> repo root is three parents up from this file.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_DATA_DIR = _REPO_ROOT / "data" / "users"
+# Central auth store lives alongside (one level above) the per-user DB dir, so the
+# worker's `{user_id}.db` glob never picks it up (spec §12).
+_DEFAULT_AUTH_DB = _DEFAULT_DATA_DIR.parent / "auth.db"
 
 
 class Settings(BaseSettings):
@@ -29,8 +32,9 @@ class Settings(BaseSettings):
     # Per-user SQLite DB files live under this directory (gitignored).
     data_dir: Path = Field(default=_DEFAULT_DATA_DIR, description="Directory holding {user_id}.db files")
 
-    # Dev auth stub: real auth (Google OAuth + API keys) arrives in M7.
-    dev_user_id: str = Field(default="dev-user", description="Fixed user id used until auth lands")
+    # A fixed user id retained as a convenient scope identifier in unit tests. Real auth
+    # (Google OAuth + API keys) routes credentials to nanoid user_ids via auth.db (M7).
+    dev_user_id: str = Field(default="dev-user", description="Fixed user id for test scopes")
 
     # External-service secrets. Optional placeholders; read from env when present.
     gemini_api_key: str | None = Field(default=None, description="Gemini API key (async enrichment, M3+)")
@@ -68,6 +72,36 @@ class Settings(BaseSettings):
     # tags (spec §7.2: "at hundreds of tags they won't fit the prompt").
     nearest_tags_limit: int = Field(
         default=10, description="Max nearest existing tags shown to the tagger (spec §7.2)"
+    )
+
+    # --- Auth (M7, spec §12) ---------------------------------------------------------
+    # Central credential store (separate from per-user DBs). Defaults next to the data
+    # dir, NOT inside it, so the worker's {user_id}.db scan never opens it. Gitignored.
+    auth_db_path: Path = Field(
+        default=_DEFAULT_AUTH_DB, description="Path to the central auth.db (users + api_keys)"
+    )
+    # HS256 signing secret for Brain2 JWTs and the OAuth state/session. MUST be set to a
+    # high-entropy value in production; the default is dev-only and never used live.
+    jwt_secret: str = Field(
+        default="dev-insecure-secret-change-me",
+        description="HS256 secret for Brain2 JWTs and OAuth codes (set in prod)",
+    )
+    # TTLs (seconds). Access/session tokens are short-lived; auth codes are very short.
+    access_token_ttl: int = Field(default=3600, description="Brain2 access-token TTL (s)")
+    session_ttl: int = Field(default=1209600, description="Dashboard session cookie TTL (s)")
+    auth_code_ttl: int = Field(default=60, description="OAuth authorization-code TTL (s)")
+    # Exact-match allowlist of OAuth redirect URIs (no substring/open-redirect). Comma- or
+    # JSON-list-parsed by pydantic-settings from the env var OAUTH_REDIRECT_URIS.
+    oauth_redirect_uris: list[str] = Field(
+        default_factory=list, description="Exact allowlist of OAuth client redirect_uri values"
+    )
+    # Where /auth/callback redirects after issuing the dashboard session cookie.
+    dashboard_url: str = Field(
+        default="http://localhost:5173", description="Dashboard origin for post-login redirect"
+    )
+    # Set the Secure flag on session cookies (disable only for local http dev/tests).
+    cookie_secure: bool = Field(
+        default=True, description="Set Secure on the session cookie (disable for local http)"
     )
 
 

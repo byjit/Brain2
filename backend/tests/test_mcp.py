@@ -31,16 +31,19 @@ def temp_data_dir(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
-def test_bearer_token_resolves_to_dev_user():
-    from brain2.config import get_settings
+def test_valid_api_key_resolves_to_its_user():
+    """M7: a real seeded API key (conftest) resolves through auth.db to its owner."""
+    import os
 
-    user_id = auth.resolve_token_to_user_id("Bearer br2_live_anything")
-    assert user_id == get_settings().dev_user_id
+    user_id = auth.resolve_token_to_user_id(f"Bearer {os.environ['AUTH_API_KEY']}")
+    assert user_id == "test-user"
 
 
 def test_missing_or_malformed_token_rejected():
     assert auth.resolve_token_to_user_id(None) is None
     assert auth.resolve_token_to_user_id("Token abc") is None
+    # An unknown API key no longer resolves to a dev stub — it is rejected (M7).
+    assert auth.resolve_token_to_user_id("Bearer br2_live_unknown") is None
 
 
 def test_save_then_retrieve_round_trip():

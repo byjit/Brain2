@@ -4,6 +4,8 @@ Exercises the FastMCP server mounted into FastAPI via a real streamable-HTTP MCP
 (in-process ASGI), proving the Bearer header flows through to per-user DB routing.
 """
 
+import os
+
 import httpx
 import pytest
 from mcp import ClientSession
@@ -59,7 +61,7 @@ async def test_save_then_retrieve_round_trip_over_http():
     async with app.router.lifespan_context(app):
         http_client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
-            headers={"Authorization": "Bearer br2_live_test"},
+            headers={"Authorization": f"Bearer {os.environ['AUTH_API_KEY']}"},
         )
         async with streamable_http_client(MCP_URL, http_client=http_client) as (read, write, _):
             async with ClientSession(read, write) as session:
@@ -84,7 +86,7 @@ async def test_delete_and_get_tags_round_trip_over_http():
     async with app.router.lifespan_context(app):
         http_client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
-            headers={"Authorization": "Bearer br2_live_test"},
+            headers={"Authorization": f"Bearer {os.environ['AUTH_API_KEY']}"},
         )
         async with streamable_http_client(MCP_URL, http_client=http_client) as (read, write, _):
             async with ClientSession(read, write) as session:
@@ -106,6 +108,24 @@ async def test_delete_and_get_tags_round_trip_over_http():
                 # Idempotent: deleting again returns false.
                 again = await session.call_tool("delete", {"id": entry_id})
                 assert again.structuredContent["deleted"] is False
+
+
+@pytest.mark.anyio
+async def test_tool_call_without_valid_bearer_is_rejected():
+    """M7: an MCP tool call with no/garbage Bearer must not resolve to a user."""
+    app = create_app(mcp_transport_security=_TEST_SECURITY)
+
+    async with app.router.lifespan_context(app):
+        http_client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            headers={"Authorization": "Bearer br2_live_not_a_real_key"},
+        )
+        async with streamable_http_client(MCP_URL, http_client=http_client) as (read, write, _):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool("retrieve", {"query": "anything"})
+                # The unauthenticated call surfaces as a tool error, not a successful result.
+                assert result.isError
 
 
 @pytest.fixture

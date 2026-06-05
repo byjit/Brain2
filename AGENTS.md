@@ -10,6 +10,7 @@ Save content from anywhere, and bring it as context to every AI agents you use.
 
 - [extension/](/extension): Chrome Extension built using WXT, React, TypeScript, and Tailwind CSS.
 - [backend/](/backend): Python + FastAPI backend (per-user SQLite memory store). Managed with **uv**, Python pinned to **3.12**. See [backend/ARCHITECTURE.md](/backend/ARCHITECTURE.md) for layout and conventions.
+- [platform/](/platform): Web platform and user dashboard built using React, TypeScript, Vite, and TanStack Router.
 - [mcp/](/mcp): Directory for Model Context Protocol (MCP) servers.
 - [docs/](/docs): Product documentation and specifications (e.g., [spec.md](/docs/spec.md)).
 - [.agents/](/.agents) / [.claude/](/.claude): AI agent configurations and shared skills (symlinked).
@@ -53,7 +54,16 @@ Save content from anywhere, and bring it as context to every AI agents you use.
 - **Framework**: FastAPI + Uvicorn
 - **MCP**: official MCP Python SDK (`mcp`, FastMCP) mounted into FastAPI over the
   streamable-HTTP transport at `/mcp` (the spec §6 names SSE; see backend/ARCHITECTURE.md)
-- **Storage**: Per-user SQLite (`{user_id}.db`) with FTS5 (BM25 keyword search) + sqlite-vec (`vec0`, 768-dim)
+- **Storage**: Per-user SQLite (`{user_id}.db`) with FTS5 (BM25 keyword search) + sqlite-vec (`vec0`, 768-dim).
+  A separate central `auth.db` (default `{DATA_DIR}/../auth.db`, gitignored) holds identities,
+  API-key hashes, and OAuth codes — credentials resolve to a `user_id` there before the per-user DB opens
+- **Auth (spec §12)**: Hybrid — Personal Access Tokens (API keys, `br2_live_…`, SHA-256 hashed) for
+  CLI/Desktop, Google Sign-In + Brain2-issued OAuth 2.1 + PKCE (S256) for web/extension. Brain2 access +
+  session tokens are HS256 JWTs via `pyjwt`. Google identity verification sits behind an
+  `IdentityProvider` interface with an offline fake, so the suite never contacts Google. Endpoints:
+  `GET /auth/login`, `GET /auth/callback`, `GET /auth/me`, `POST /auth/logout`, `GET /oauth/authorize`,
+  `POST /oauth/token`, and `/settings/tokens` (POST/GET/DELETE). Every REST entry endpoint and all four
+  MCP tools require a valid `Bearer` credential
 - **LLM / enrichment**: `google-genai` SDK + Gemini Flash for note summarization and the
   M5 single combined auto-tagging call (structured output: note + tags + new-tag
   descriptions), `gemini-embedding-001` (768-dim) for note/query/tag-description embeddings

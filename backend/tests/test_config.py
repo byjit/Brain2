@@ -42,3 +42,23 @@ def test_worker_knobs_overridable_by_env(monkeypatch):
     s = Settings(_env_file=None)
     assert s.gemini_summary_model == "gemini-3.1-flash-lite-preview"
     assert s.worker_max_attempts == 5
+
+
+def test_auth_db_defaults_outside_data_dir(tmp_path):
+    """auth.db must sit OUTSIDE data_dir so the worker's {user_id}.db scan never opens it."""
+    s = Settings(_env_file=None)
+    assert s.auth_db_path.name == "auth.db"
+    assert s.auth_db_path.parent != s.data_dir
+
+
+def test_auth_knobs_have_defaults_and_override(monkeypatch):
+    s = Settings(_env_file=None)
+    assert s.access_token_ttl > 0
+    assert s.auth_code_ttl > 0
+    assert s.session_ttl > 0
+    assert s.oauth_redirect_uris == []
+    monkeypatch.setenv("ACCESS_TOKEN_TTL", "120")
+    monkeypatch.setenv("OAUTH_REDIRECT_URIS", '["https://a/cb","https://b/cb"]')
+    s2 = Settings(_env_file=None)
+    assert s2.access_token_ttl == 120
+    assert s2.oauth_redirect_uris == ["https://a/cb", "https://b/cb"]

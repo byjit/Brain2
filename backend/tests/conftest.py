@@ -1,7 +1,10 @@
 """Shared pytest fixtures.
 
-A TestClient wired to a temp DATA_DIR so tests never touch the real ./data.
-The get_db dependency is overridden to open a per-test user DB under tmp_path.
+Auth test seam (M7): a session-scoped tmp ``auth.db`` is configured via settings and
+seeded with a known user + API key, so any test can authenticate offline with a real
+Bearer credential (``AUTH_API_KEY``) without contacting Google. REST tests additionally
+override ``get_current_user`` to inject the known user directly; MCP/transport tests send
+the real Bearer header, which resolves through the seeded auth.db.
 """
 
 import os
@@ -13,7 +16,45 @@ from brain2.db.connection import open_user_db
 from brain2.deps import get_current_user, get_db
 from brain2.main import create_app
 
+# The known test user and the env-routed auth.db are wired by `_auth_seam` below.
 _DEV_USER = "test-user"
+
+
+@pytest.fixture(scope="session")
+def _auth_db_path(tmp_path_factory):
+    """A session-wide auth.db path so every test shares one seeded credential store."""
+    return tmp_path_factory.mktemp("auth") / "auth.db"
+
+
+@pytest.fixture(autouse=True)
+def _auth_seam(_auth_db_path, monkeypatch):
+    """Point settings at the tmp auth.db and seed a known user + API key (offline seam).
+
+    Exposes the raw key on ``os.environ['AUTH_API_KEY']`` for MCP/transport tests that
+    send a real Bearer header. The JWT secret is pinned so issued access tokens verify.
+    """
+    from brain2.auth import api_keys
+    from brain2.auth.store import open_auth_db
+    from brain2.config import get_settings
+
+    monkeypatch.setenv("AUTH_DB_PATH", str(_auth_db_path))
+    monkeypatch.setenv("JWT_SECRET", "test-jwt-secret")
+    get_settings.cache_clear()
+
+    with open_auth_db(_auth_db_path) as conn:
+        existing = conn.execute(
+            "SELECT user_id FROM users WHERE user_id=?", (_DEV_USER,)
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                "INSERT INTO users (user_id, google_sub, email, created_at) VALUES (?,?,?,?)",
+                (_DEV_USER, "test-sub", "test@example.com", "2026-01-01T00:00:00Z"),
+            )
+            conn.commit()
+            created = api_keys.create_key(conn, user_id=_DEV_USER, name="test")
+            os.environ["AUTH_API_KEY"] = created.api_key
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture(autouse=True)
@@ -42,12 +83,26 @@ def _offline_unless_key_in_environ(monkeypatch):
     def _offline_get_settings():
         settings = real_get_settings()
         object.__setattr__(settings, "gemini_api_key", None)
+        # Force the offline FakeIdentityProvider too: the repo .env carries real Google
+        # creds, but no test may contact Google (M7). The factory selection is unit-tested
+        # in test_identity_provider.py by constructing Settings directly.
+        object.__setattr__(settings, "google_client_id", None)
+        object.__setattr__(settings, "google_client_secret", None)
         return settings
 
     _offline_get_settings.cache_clear = real_get_settings.cache_clear
     monkeypatch.setattr(config, "get_settings", _offline_get_settings)
     # Patch the already-imported references in modules that bound the name directly.
-    for module_name in ("brain2.services.worker", "brain2.mcp.tools", "brain2.api.entries"):
+    for module_name in (
+        "brain2.services.worker",
+        "brain2.mcp.tools",
+        "brain2.api.entries",
+        "brain2.api.auth",
+        "brain2.api.settings_tokens",
+        "brain2.auth.deps",
+        "brain2.deps",
+        "brain2.mcp.auth",
+    ):
         import importlib
 
         try:
