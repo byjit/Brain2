@@ -58,7 +58,7 @@ function App() {
       )}
 
       {auth === "signed-out" && (
-        <SignIn onSignedIn={() => setAuth("signed-in")} />
+        <SignIn onSignedIn={() => void refreshAuth()} />
       )}
 
       {auth === "signed-in" && (

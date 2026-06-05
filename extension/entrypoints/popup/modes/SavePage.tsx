@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ChevronsUpDown, Link2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,12 @@ export function SavePage({ onSignedOut }: SavePageProps) {
   const [savingUrl, setSavingUrl] = useState(false);
   const [overrideUrl, setOverrideUrl] = useState("");
 
+  // Guards post-await state updates: a signed-out error unmounts this
+  // component (App swaps in <SignIn>), so the in-flight flags must not be
+  // cleared on an unmounted instance.
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+
   async function save(overrideUrlArg?: string) {
     try {
       await savePageMsg.send(
@@ -51,7 +57,7 @@ export function SavePage({ onSignedOut }: SavePageProps) {
     try {
       await save();
     } finally {
-      setSavingPage(false);
+      if (mountedRef.current) setSavingPage(false);
     }
   }
 
@@ -62,7 +68,7 @@ export function SavePage({ onSignedOut }: SavePageProps) {
     try {
       await save(url);
     } finally {
-      setSavingUrl(false);
+      if (mountedRef.current) setSavingUrl(false);
     }
   }
 

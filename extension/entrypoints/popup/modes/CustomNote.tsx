@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { NotebookPen, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,11 @@ export function CustomNote({ onSignedOut }: CustomNoteProps) {
 
   const canSave = text.trim().length > 0;
 
+  // Guards the post-await flag clear: a signed-out error unmounts this
+  // component (App swaps in <SignIn>), so we must not setState afterwards.
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+
   async function handleSave() {
     const note = text.trim();
     if (!note) return;
@@ -38,7 +43,7 @@ export function CustomNote({ onSignedOut }: CustomNoteProps) {
       }
       toast.error("Couldn't save your note. Please try again.");
     } finally {
-      setSaving(false);
+      if (mountedRef.current) setSaving(false);
     }
   }
 
