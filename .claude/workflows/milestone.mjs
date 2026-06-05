@@ -4,9 +4,8 @@ export const meta = {
   whenToUse: 'Driving a single milestone of the Brain2 backend from docs/spec.md',
   phases: [
     { title: 'Build', detail: 'TDD implementation of the milestone deliverables' },
-    { title: 'Review', detail: '3 parallel lenses: correctness, edge-cases, SOLID/simplicity' },
-    { title: 'Triage', detail: 'dedup findings, drop over-engineering, keep actionable' },
-    { title: 'Fix', detail: 'apply actionable findings, re-run tests' },
+    { title: 'Review', detail: '2 parallel lenses: correctness+edge-cases, SOLID/simplicity' },
+    { title: 'Triage & Fix', detail: 'one agent verifies/dedups findings then applies fixes' },
   ],
 }
 
@@ -72,25 +71,15 @@ const FINDINGS_SCHEMA = {
   },
 }
 
-const TRIAGE_SCHEMA = {
+const TRIAGE_FIX_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['actionable', 'rejected'],
+  required: ['applied', 'rejected', 'testStatus'],
   properties: {
-    actionable: {
+    applied: {
       type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['title', 'location', 'problem', 'fix', 'severity'],
-        properties: {
-          title: { type: 'string' },
-          location: { type: 'string' },
-          problem: { type: 'string' },
-          fix: { type: 'string', description: 'Concrete change to make' },
-          severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
-        },
-      },
+      items: { type: 'string' },
+      description: 'Fixes applied — each entry says what changed and where (file:line)',
     },
     rejected: {
       type: 'array',
@@ -100,17 +89,8 @@ const TRIAGE_SCHEMA = {
         required: ['title', 'reason'],
         properties: { title: { type: 'string' }, reason: { type: 'string' } },
       },
+      description: 'Findings deliberately NOT fixed (false positive, out of scope, over-engineering) with the reason',
     },
-  },
-}
-
-const FIX_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['applied', 'testStatus'],
-  properties: {
-    applied: { type: 'array', items: { type: 'string' } },
-    skipped: { type: 'array', items: { type: 'string' } },
     testStatus: { type: 'string', enum: ['all_pass', 'some_fail', 'not_run'] },
     testOutputTail: { type: 'string' },
     notes: { type: 'string' },
@@ -164,20 +144,18 @@ and include the failing output tail.`,
 phase('Review')
 const LENSES = [
   {
-    key: 'correctness',
-    prompt: `Hunt for CORRECTNESS BUGS in the milestone ${m.number} changes (run \`git diff main...HEAD\` or
-\`git diff\` to see them). Focus: logic errors, wrong SQL, broken async, race conditions in the worker
-queue, mishandled None/empty, off-by-one, incorrect URL normalization, dedup/upsert mistakes, wrong
-status transitions, transactions left uncommitted, resource leaks (unclosed DB connections). Verify
-claims against docs/spec.md. Only report real bugs you can point to in the code.`,
-  },
-  {
-    key: 'edge-cases',
-    prompt: `Hunt for EDGE CASES and ROBUSTNESS gaps in the milestone ${m.number} changes (see \`git diff\`).
-Focus: malformed/missing URLs, huge inputs, unicode, missing fields, duplicate saves, concurrent
-writes to the same per-user DB, WAL/locking, retry-ceiling boundaries, empty search queries, FTS5
-special characters, sqlite-vec dimension mismatches, partial failures mid-pipeline. For each gap,
-state the concrete input that breaks it. Check error messages are actionable.`,
+    key: 'correctness-edge-cases',
+    prompt: `Hunt for both CORRECTNESS BUGS and EDGE-CASE / ROBUSTNESS gaps in the milestone ${m.number}
+changes (run \`git diff main...HEAD\` or \`git diff\` to see them).
+Correctness: logic errors, wrong SQL, broken async, race conditions in the worker queue, mishandled
+None/empty, off-by-one, incorrect URL normalization, dedup/upsert mistakes, wrong status transitions,
+uncommitted transactions, resource leaks (unclosed DB connections), RRF/ranking math errors, vector
+dimension handling, tag canonicalization/co-occurrence math.
+Edge cases: malformed/missing URLs, huge inputs, unicode, missing fields, duplicate/concurrent saves
+to the same per-user DB, WAL/locking, retry-ceiling/backoff boundaries, empty search queries, FTS5
+special characters, sqlite-vec dimension mismatches, partial failures mid-pipeline. For each issue,
+name the concrete input that breaks it and verify against docs/spec.md. Only report real issues you
+can point to in the code; check error messages are actionable.`,
   },
   {
     key: 'solid-simplicity',
@@ -199,59 +177,42 @@ const reviews = await parallel(
 )
 const allFindings = reviews.filter(Boolean).flatMap(r => r.findings || [])
 
-// ---------------- Phase 3: Triage ----------------
-phase('Triage')
-let triage = { actionable: [], rejected: [] }
+// ---------------- Phase 3: Triage & Fix (single agent) ----------------
+phase('Triage & Fix')
+let resolve = { applied: [], rejected: [], testStatus: build.testStatus, notes: 'No findings; nothing to triage or fix.' }
 if (allFindings.length > 0) {
-  triage = await agent(
+  resolve = await agent(
     `${SHARED_CONTEXT}
 
-Three reviewers examined the milestone ${m.number} changes. Here are their raw findings as JSON:
+Two reviewers examined the milestone ${m.number} changes. Here are their raw findings as JSON:
 
 ${JSON.stringify(allFindings, null, 2)}
 
-Inspect the actual code (\`git diff\`, Read files) to VERIFY each finding is real. Then produce a
-triaged list:
-- actionable: real, in-scope problems worth fixing now (true bugs, real edge cases, real SOLID
-  violations). Merge duplicates. Give a concrete fix for each.
-- rejected: false positives, out-of-scope-for-this-milestone items, and OVER-ENGINEERING suggestions
-  that would violate YAGNI — with the reason.
+Do BOTH triage and fix in this single pass:
 
-Be ruthless about not gold-plating. A suggestion to add abstraction/config/flexibility that nothing
-currently needs belongs in rejected. Return the structured triage.`,
-    { label: `triage:M${m.number}`, phase: 'Triage', schema: TRIAGE_SCHEMA },
-  )
-}
+1. TRIAGE — inspect the actual code (\`git diff\`, Read files) to VERIFY each finding is real. Merge
+   duplicates. Drop false positives, out-of-scope-for-this-milestone items, and OVER-ENGINEERING
+   suggestions that would violate YAGNI — record each dropped item in \`rejected\` with a one-line
+   reason. Be ruthless about not gold-plating: abstraction/config/flexibility that nothing currently
+   needs belongs in rejected.
+2. FIX — for each remaining real, in-scope finding, apply the MINIMAL change. For any behavior change
+   follow TDD: add/adjust a failing test first, watch it fail, then fix. Do not introduce abstractions
+   beyond what the fix needs. Do NOT delete unrelated files or code.
+3. After applying, run \`cd backend && uv run pytest -q\` and ensure it is fully green.
 
-// ---------------- Phase 4: Fix ----------------
-phase('Fix')
-let fix = { applied: [], skipped: [], testStatus: build.testStatus, notes: 'No actionable findings; nothing to fix.' }
-if (triage.actionable && triage.actionable.length > 0) {
-  fix = await agent(
-    `${SHARED_CONTEXT}
-
-Apply these triaged, actionable fixes to the milestone ${m.number} code:
-
-${JSON.stringify(triage.actionable, null, 2)}
-
-Rules:
-- For any behavior change, follow TDD: add/adjust a failing test first, then fix.
-- Make the minimal change that resolves each item. Do not introduce new abstractions beyond what
-  the fix needs.
-- After applying, run \`cd backend && uv run pytest -q\` and ensure it is fully green.
-Return the structured fix report with the final testStatus and output tail.`,
-    { label: `fix:M${m.number}`, phase: 'Fix', schema: FIX_SCHEMA },
+Return the structured report: applied (what changed and where), rejected (with reasons), final
+testStatus + output tail.`,
+    { label: `triage-fix:M${m.number}`, phase: 'Triage & Fix', schema: TRIAGE_FIX_SCHEMA },
   )
 }
 
 // ---------------- Report ----------------
-log(`Milestone ${m.number} done — build:${build.testStatus}, findings:${allFindings.length}, actionable:${triage.actionable.length}, fix:${fix.testStatus}`)
+log(`Milestone ${m.number} done — build:${build.testStatus}, findings:${allFindings.length}, applied:${resolve.applied.length}, final:${resolve.testStatus}`)
 return {
   milestone: m.number,
   title: m.title,
   build,
   reviewFindingCount: allFindings.length,
-  triage,
-  fix,
-  finalTestStatus: fix.testStatus,
+  resolve,
+  finalTestStatus: resolve.testStatus,
 }

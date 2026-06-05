@@ -1,0 +1,40 @@
+---
+title: "Welcome to the Boilerplate Blog"
+description: "Discover how we built this extremely premium and feature-rich React boilerplate with TanStack Router, Tailwind CSS v4, and Content Collections."
+date: "2026-06-04"
+author: "Antigravity AI"
+published: true
+---
+
+# Hello and welcome!
+
+This is our first blog post rendered dynamically using **Content Collections** and **MDX**! 
+
+## Why Content Collections?
+
+Content Collections is a lightweight yet extremely powerful way to compile local Markdown & MDX content into type-safe data structures. It handles compilation, caching, and schema validation automatically using Zod under the hood.
+
+Here is a list of features configured in this boilerplate:
+1. **Type-Safe Routing** with TanStack Router.
+2. **Modern Styling** with Tailwind CSS v4.
+3. **Robust State Management** using Zustand.
+4. **Data Querying** with TanStack Query.
+5. **Dynamic MDX rendering** using Content Collections.
+
+### Code Sample
+
+Let's verify code block highlights inside our blog:
+
+```tsx
+import { MDXContent } from "@content-collections/mdx/react";
+
+export function Post({ code }) {
+  return (
+    <article className="prose dark:prose-invert">
+      <MDXContent code={code} />
+    </article>
+  );
+}
+```
+
+We hope you enjoy building with this new capability!
