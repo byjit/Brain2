@@ -64,7 +64,7 @@ graph TD
 - **Hybrid Search (BM25 + Vector)** — Finds relevant documents using keyword matching on titles/tags combined with semantic vector search on summarized content (merged via Reciprocal Rank Fusion).
 - **Agent Write-Back** — Let your AI agents add entries, update notes, and categorize bookmarks directly via the `save` tool during conversations.
 - **Isolated SQLite Storage** — Zero cross-user database leakage. Every user gets a private `{user_id}.db` SQLite database with integrated vector capabilities.
-- **Modern Authentication** — Built-in OAuth 2.1 flow with PKCE, integrating seamlessly with client environments and supporting "Sign in with Google."
+- **Modern Authentication** — Built-in OAuth 2.1 flow with PKCE, integrating seamlessly with client environments and supporting "Sign in with Google." Implements MCP OAuth 2.1 discovery (RFC 9728 and RFC 8414) for direct connection to web-based AI clients like Claude Web custom connectors.
 
 ---
 

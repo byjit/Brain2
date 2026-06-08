@@ -317,7 +317,7 @@ backend/
   `PATCH /entries/{id}` is the §7.4 repair flow (`repair.repair_entry`; providers wired from
   config; 404 for an absent id). The app
   factory adds a `/health` probe, includes routers, and mounts the MCP server's
-  streamable-HTTP ASGI app at `/mcp` (tools reachable at `/mcp/mcp`). The FastAPI lifespan
+  streamable-HTTP ASGI app at `/connect` (tools reachable at `/connect/mcp`). The FastAPI lifespan
   runs the MCP `session_manager` and (when `enable_worker=True`, the default) launches the
   background `run_worker_loop` task, cancelling it cleanly on shutdown. Tests pass
   `enable_worker=False` (they drive a tmp `DATA_DIR` through dependency overrides, so the
@@ -364,7 +364,7 @@ backend/
 
 - **api/auth.py + api/settings_tokens.py — the auth HTTP surface (spec §6/§12).**
   - Google Sign-In: `GET /auth/login` → redirect to Google consent with a signed,
-    short-lived CSRF `state` (a purpose-pinned JWT); `GET /auth/callback` → verify state,
+    short-lived CSRF `state` (a purpose-pinned JWT); `GET /api/auth/callback/google` → verify state,
     exchange the code via the identity provider, `upsert_by_google_sub` (implicit signup),
     set the httpOnly + Secure + SameSite=Lax session cookie, redirect to the dashboard;
     `GET /auth/me` (current user); `POST /auth/logout` (clear cookie).
@@ -385,7 +385,7 @@ The spec §6 diagram names an SSE transport (`GET /mcp/sse`, `POST /mcp/msg`). W
 use the **streamable HTTP** transport, which the current MCP Python SDK recommends and the
 mcp-builder best-practices mark SSE as deprecated in favor of. The server is **stateless**
 with JSON responses (`stateless_http=True, json_response=True`) so it scales horizontally
-with no server-side session affinity. The single endpoint is `POST /mcp/mcp`. DNS-rebinding
+with no server-side session affinity. The single endpoint is `POST /connect/mcp`. DNS-rebinding
 protection (Host/Origin allow-list) is left on by default for production; `create_app` and
 `build_mcp_server` accept a `transport_security` override so in-process ASGI tests can relax
 it. Auth (M7, spec §12) resolves the request's `Bearer` credential — a Personal Access Token

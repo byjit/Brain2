@@ -1,4 +1,5 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
+import { env } from "@/env";
 
 /**
  * Authenticated section layout route.
@@ -8,15 +9,21 @@ import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
  */
 export const Route = createFileRoute("/_authed")({
 	beforeLoad: async ({ location }) => {
-		/**
-		 * TODO: Replace this placeholder with your real auth check
-		 * (e.g. token validation, session lookup, Zustand auth store, API call).
-		 */
-		const isAuthenticated = false;
+		let isAuthenticated = false;
+		try {
+			const res = await fetch(`${env.VITE_BRAIN2_API_URL}/auth/me`, {
+				credentials: "include",
+			});
+			if (res.ok) {
+				isAuthenticated = true;
+			}
+		} catch {
+			isAuthenticated = false;
+		}
 
 		if (!isAuthenticated) {
 			throw redirect({
-				to: "/",
+				to: "/login",
 				search: {
 					redirect: location.href,
 				},

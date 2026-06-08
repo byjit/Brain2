@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     oauth_redirect_uris: list[str] = Field(
         default_factory=list, description="Exact allowlist of OAuth client redirect_uri values"
     )
-    # Where /auth/callback redirects after issuing the dashboard session cookie.
+    # Where /api/auth/callback/google redirects after issuing the dashboard session cookie.
     dashboard_url: str = Field(
         default="http://localhost:5173", description="Dashboard origin for post-login redirect"
     )

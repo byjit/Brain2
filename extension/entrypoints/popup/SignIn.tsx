@@ -2,7 +2,6 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Brain, LogIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { signInMsg } from "@/services/capture/messages";
 
@@ -36,32 +35,31 @@ export function SignIn({ onSignedIn }: SignInProps) {
   }
 
   return (
-    <Card className="border-none shadow-none">
-      <CardHeader className="items-center text-center gap-2">
-        <div className="flex size-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
-          <Brain className="size-6" />
+    <div className="flex flex-col items-center text-center py-4 px-2 space-y-6">
+      <div className="space-y-3 flex flex-col items-center">
+        <div className="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary shadow-xs">
+          <Brain className="size-7 animate-pulse" />
         </div>
         <div className="space-y-1">
-          <h1 className="text-lg font-semibold tracking-tight">Brain2</h1>
-          <p className="text-sm text-muted-foreground">
-            Save anything. Bring it as context to every AI agent.
+          <h1 className="text-xl font-bold tracking-tight">Welcome to Brain2</h1>
+          <p className="text-xs text-muted-foreground max-w-[260px] mx-auto leading-relaxed">
+            Save anything you read or write, and instantly bring it as context to all of your AI agents.
           </p>
         </div>
-      </CardHeader>
-      <CardContent>
-        <Button
-          className="w-full"
-          onClick={handleSignIn}
-          disabled={loading}
-        >
-          {loading ? (
-            <Spinner className="size-4" />
-          ) : (
-            <LogIn className="size-4" />
-          )}
-          Sign in with Google
-        </Button>
-      </CardContent>
-    </Card>
+      </div>
+      
+      <Button
+        className="w-full h-11 bg-primary text-primary-foreground hover:bg-primary/95 cursor-pointer rounded-xl font-semibold text-sm gap-2.5 shadow-sm transition-colors"
+        onClick={handleSignIn}
+        disabled={loading}
+      >
+        {loading ? (
+          <Spinner className="size-4" />
+        ) : (
+          <LogIn className="size-4" />
+        )}
+        Sign in with Google
+      </Button>
+    </div>
   );
 }

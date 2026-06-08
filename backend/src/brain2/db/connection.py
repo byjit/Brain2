@@ -29,7 +29,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     """Open a connection with WAL, foreign keys, sqlite-vec, and schema applied."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
 
     # Load the sqlite-vec extension (required for the vec0 tables).

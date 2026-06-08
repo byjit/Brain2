@@ -1,6 +1,6 @@
 """Google identity provider behind an interface, with an offline fake (spec §12).
 
-The dashboard's ``/auth/callback`` exchanges a Google authorization code for the user's
+The dashboard's ``/api/auth/callback/google`` exchanges a Google authorization code for the user's
 verified identity (``google_sub`` + ``email``). The real provider talks to Google's token
 and tokeninfo endpoints; the fake returns canned identities so the entire auth suite runs
 offline without ever contacting Google. ``build_identity_provider`` selects real-vs-fake

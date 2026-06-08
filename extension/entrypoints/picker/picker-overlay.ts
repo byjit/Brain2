@@ -218,22 +218,23 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
       maxHeight: "80vh",
       display: "flex",
       flexDirection: "column",
-      gap: "12px",
-      padding: "20px",
+      gap: "14px",
+      padding: "24px",
       background: "#ffffff",
-      color: "#1f2937",
-      border: `1px solid ${ACCENT}`,
-      borderRadius: "12px",
-      boxShadow: "0 10px 40px rgba(0, 0, 0, 0.25)",
+      color: "#0f172a",
+      border: "1px solid rgba(99, 102, 241, 0.15)",
+      borderRadius: "16px",
+      boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(99, 102, 241, 0.1)",
       font: "14px/1.5 system-ui, -apple-system, sans-serif",
       zIndex: "2147483647",
     } satisfies Partial<CSSStyleDeclaration>);
 
     const heading = document.createElement("div");
-    heading.textContent = "Save clip to Brain2";
+    heading.textContent = "Review Selected Content";
     Object.assign(heading.style, {
-      fontWeight: "600",
-      fontSize: "15px",
+      fontWeight: "700",
+      fontSize: "16px",
+      color: "#1e293b",
     } satisfies Partial<CSSStyleDeclaration>);
 
     const textarea = document.createElement("textarea");
@@ -244,59 +245,91 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
       flex: "1",
       resize: "vertical",
       boxSizing: "border-box",
-      padding: "10px",
-      border: "1px solid #d1d5db",
-      borderRadius: "8px",
-      font: "13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace",
-      color: "#1f2937",
-      background: "#fafafa",
+      padding: "12px",
+      border: "1px solid #e2e8f0",
+      borderRadius: "12px",
+      font: "13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace",
+      color: "#334155",
+      background: "#f8fafc",
+      outline: "none",
+      transition: "border-color 0.15s ease",
     } satisfies Partial<CSSStyleDeclaration>);
+    
+    textarea.addEventListener("focus", () => {
+      textarea.style.borderColor = ACCENT;
+    });
+    textarea.addEventListener("blur", () => {
+      textarea.style.borderColor = "#e2e8f0";
+    });
 
     const status = document.createElement("div");
     Object.assign(status.style, {
-      fontSize: "13px",
+      fontSize: "12px",
       minHeight: "18px",
+      fontWeight: "500",
     } satisfies Partial<CSSStyleDeclaration>);
 
     const actions = document.createElement("div");
     Object.assign(actions.style, {
       display: "flex",
       justifyContent: "flex-end",
-      gap: "8px",
+      gap: "10px",
     } satisfies Partial<CSSStyleDeclaration>);
 
     const cancelBtn = document.createElement("button");
     cancelBtn.textContent = "Cancel";
     Object.assign(cancelBtn.style, {
-      padding: "8px 16px",
-      borderRadius: "8px",
-      border: "1px solid #d1d5db",
+      padding: "8px 18px",
+      borderRadius: "10px",
+      border: "1px solid #e2e8f0",
       background: "#ffffff",
-      color: "#374151",
+      color: "#475569",
       cursor: "pointer",
       font: "inherit",
+      fontWeight: "500",
+      fontSize: "13px",
+      transition: "all 0.15s ease",
     } satisfies Partial<CSSStyleDeclaration>);
+    
+    cancelBtn.addEventListener("mouseover", () => {
+      cancelBtn.style.background = "#f1f5f9";
+      cancelBtn.style.borderColor = "#cbd5e1";
+    });
+    cancelBtn.addEventListener("mouseout", () => {
+      cancelBtn.style.background = "#ffffff";
+      cancelBtn.style.borderColor = "#e2e8f0";
+    });
 
     const saveBtn = document.createElement("button");
-    saveBtn.textContent = "Save";
+    saveBtn.textContent = "Save Clip";
     Object.assign(saveBtn.style, {
-      padding: "8px 16px",
-      borderRadius: "8px",
+      padding: "8px 18px",
+      borderRadius: "10px",
       border: "none",
       background: ACCENT,
       color: "#ffffff",
       cursor: "pointer",
       font: "inherit",
       fontWeight: "600",
+      fontSize: "13px",
+      boxShadow: "0 2px 4px rgba(99, 102, 241, 0.2)",
+      transition: "all 0.15s ease",
     } satisfies Partial<CSSStyleDeclaration>);
+    
+    saveBtn.addEventListener("mouseover", () => {
+      saveBtn.style.background = "#4f46e5";
+    });
+    saveBtn.addEventListener("mouseout", () => {
+      saveBtn.style.background = ACCENT;
+    });
 
     cancelBtn.addEventListener("click", () => ui.remove());
 
     saveBtn.addEventListener("click", async () => {
       saveBtn.disabled = true;
       saveBtn.style.opacity = "0.6";
-      status.style.color = "#6b7280";
-      status.textContent = "Saving…";
+      status.style.color = "#64748b";
+      status.textContent = "Saving to Brain2...";
       try {
         await saveClipMsg.send(
           {
@@ -314,7 +347,7 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
         // Keep the card open so the user's edited text is never lost.
         saveBtn.disabled = false;
         saveBtn.style.opacity = "1";
-        status.style.color = "#dc2626";
+        status.style.color = "#ef4444";
         status.textContent = "Couldn't save — try the toolbar to sign in.";
       }
     });

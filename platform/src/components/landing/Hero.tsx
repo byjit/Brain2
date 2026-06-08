@@ -6,23 +6,24 @@ export const Hero = () => {
 	return (
 		<section className="w-full max-w-2xl mx-auto px-6 pt-16 pb-6">
 			{/* Product Title Banner */}
-			<div className="flex items-center gap-4 mb-8">
+			<div className="flex items-center gap-1 mb-8">
 				<div className="inline-flex rounded-xl bg-muted/50 p-2">
 					<LogoIcon className="h-8 w-8 text-foreground" />
 				</div>
-				<h1 className="text-2xl font-semibold tracking-tight">{APP_NAME}</h1>
+				<h1 className="text-lg font-semibold tracking-tight">{APP_NAME}</h1>
 			</div>
 
 			{/* Static Slogan */}
-			<p className="text-lg leading-relaxed mb-3 text-foreground font-semibold">
+			<p className="text-3xl leading-relaxed mb-3 text-foreground font-semibold">
 				Save your context in one place, and bring it to all AI agents you use
 			</p>
 
 			{/* Subtitle */}
 			<p className="text-[15px] leading-relaxed text-muted-foreground mb-6">
-				An open-source personal memory store for developers. Save context once via Chrome extension 
-				or terminal, and let your AI tools (Claude Code, Cursor, ChatGPT, etc.) retrieve it instantly 
-				using the Model Context Protocol (MCP). Zero filing effort, perfect semantic recall.
+				An open-source personal memory store. Save context once via Chrome
+				extension or let your AI tools export and store their context in it. And
+				bring it instantly in all the AI tools you use like Openclaw, Hermes,
+				Codex, Claude, etc. Zero filing effort, perfect semantic recall.
 			</p>
 
 			{/* Action Buttons */}
@@ -30,9 +31,9 @@ export const Hero = () => {
 				<a
 					className="inline-flex items-center whitespace-nowrap rounded-full font-medium bg-foreground text-background hover:opacity-85 transition-opacity gap-2.5 px-5 py-2.5 text-[15px]"
 					href="/login"
-        >
-          <ArrowRight className="h-4 w-4" />
-					Get Started
+				>
+					<ArrowRight className="h-4 w-4" />
+					Get Chrome Extension
 				</a>
 				<a
 					className="inline-flex items-center whitespace-nowrap gap-2 rounded-full border border-border px-5 py-2.5 text-[15px] font-medium text-foreground hover:bg-muted/30 transition-colors"
@@ -54,38 +55,22 @@ export const Hero = () => {
 					{[
 						{
 							title: "Chrome extension save",
-							desc: "capture full web pages, selections, or custom notes with zero friction",
+							desc: "capture articles, tutorials, notes, or bookmark with zero friction. And make them portable",
 						},
 						{
 							title: "MCP integration",
-							desc: "connect and query your memory store directly from Claude Code, Cursor, or ChatGPT",
+							desc: "Connect through MCP and bring your saved memories and contexts in all the AI tools you use.",
 						},
 						{
-							title: "Background enrichment",
-							desc: "Gemini Flash automatically summarizes and tags items asynchronously",
+							title: "Never loose information again",
+							desc: "Your AI can always access your saved context from any device right when it is needed.",
 						},
 						{
-							title: "Vocabulary protection",
-							desc: "RAG-grounded tagging and write-time canonicalization prevent duplicate tags",
-						},
-						{
-							title: "Private SQLite storage",
-							desc: "isolated per-user database files with full-text search (FTS5) and vector indexing",
-						},
-						{
-							title: "Agent write-back",
-							desc: "allow connected AI agents to save notes and updates back to your store",
-						},
-						{
-							title: "Hybrid search",
-							desc: "combines lexical BM25 matches with note vector embeddings for precise recall",
-						},
-						{
-							title: "Failure recovery list",
-							desc: "a dedicated 'needs attention' repair surface to ensure no capture is lost",
+							title: "Open source",
+							desc: "Built with transparency and community in mind. Use our hosted solution or self-host your own instance.",
 						},
 					].map((feature) => (
-						<li key={feature.title} className="flex gap-3">
+						<li className="flex gap-3" key={feature.title}>
 							<span className="text-muted-foreground/60 shrink-0">-</span>
 							<span>
 								<strong className="font-medium text-foreground">
@@ -98,13 +83,20 @@ export const Hero = () => {
 				</ul>
 			</section>
 
-			<div className="mt-8 mb-12 -mx-16 sm:-mx-32 md:-mx-48 lg:-mx-64 xl:-mx-80 relative rounded-2xl overflow-hidden bg-card">
+			<div className="mt-8 mb-12 -mx-20 relative rounded-2xl overflow-hidden bg-transparent">
 				<img
-					alt="Dashboard Preview"
-					className="w-full h-auto object-cover block"
-					height={1080}
-					src="https://res.cloudinary.com/dz8mikz3h/image/upload/v1755173210/thumbnail_noa_demo_kfkmyn.png"
-					width={1920}
+					alt="Brain2 Flow Diagram"
+					className="w-full h-auto block dark:hidden"
+					height={660}
+					src="/brain2-flow.svg"
+					width={1240}
+				/>
+				<img
+					alt="Brain2 Flow Diagram"
+					className="w-full h-auto hidden dark:block"
+					height={660}
+					src="/brain2-flow-dark.svg"
+					width={1240}
 				/>
 			</div>
 		</section>

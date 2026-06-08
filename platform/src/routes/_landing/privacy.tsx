@@ -4,7 +4,8 @@ import { allPrivacies } from "content-collections";
 
 export const Route = createFileRoute("/_landing/privacy")({
 	loader: () => {
-		const doc = allPrivacies.find((p) => p._meta.path === "index") || allPrivacies[0];
+		const doc =
+			allPrivacies.find((p) => p._meta.path === "index") || allPrivacies[0];
 		if (!doc) {
 			throw notFound();
 		}
@@ -24,7 +25,8 @@ function PrivacyPage() {
 				</h1>
 				{doc.date && (
 					<div className="text-sm text-muted-foreground">
-						Last updated: {new Date(doc.date).toLocaleDateString("en-US", {
+						Last updated:{" "}
+						{new Date(doc.date).toLocaleDateString("en-US", {
 							month: "long",
 							day: "numeric",
 							year: "numeric",

@@ -14,6 +14,7 @@ export const env = createEnv({
 
 	client: {
 		VITE_APP_TITLE: z.string().min(1).optional(),
+		VITE_BRAIN2_API_URL: z.string().url().default("http://localhost:8000"),
 	},
 
 	/**

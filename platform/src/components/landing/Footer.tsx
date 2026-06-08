@@ -27,14 +27,11 @@ export const Footer = () => {
 				{ label: "X / Twitter", href: "https://x.com" },
 				{ label: "Discord", href: "https://discord.com" },
 			],
-      },
-      {
-			title: "Contact Us",
-			links: [
-				{ label: "Contact", href: "mailto:support@brain2.app" },
-			],
 		},
-
+		{
+			title: "Contact Us",
+			links: [{ label: "Contact", href: "mailto:support@brain2.app" }],
+		},
 	];
 
 	return (

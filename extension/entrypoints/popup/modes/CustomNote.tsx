@@ -49,25 +49,27 @@ export function CustomNote({ onSignedOut }: CustomNoteProps) {
 
   return (
     <div className="space-y-2">
-      <Label htmlFor="custom-note" className="flex items-center gap-2">
-        <NotebookPen className="size-4" />
-        Quick note
-      </Label>
-      <Textarea
-        id="custom-note"
-        placeholder="Jot something down to save to Brain2…"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        rows={3}
-      />
+      <div className="space-y-1">
+        <Label htmlFor="custom-note" className="flex items-center gap-1 text-[11px] font-semibold text-foreground/80">
+          <NotebookPen className="size-3 text-primary" />
+          Quick Note
+        </Label>
+        <Textarea
+          id="custom-note"
+          placeholder="Jot down notes, code snippets, or thoughts to save to your memory..."
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={3}
+          className="rounded-lg border-border/80 focus-visible:ring-1 text-[11px] resize-none leading-relaxed"
+        />
+      </div>
       <Button
-        variant="secondary"
-        className="w-full"
+        className="w-full h-8 bg-primary text-primary-foreground hover:bg-primary/95 cursor-pointer rounded-lg font-medium text-[11px] gap-1 transition-colors"
         onClick={handleSave}
         disabled={!canSave || saving}
       >
-        {saving ? <Spinner className="size-4" /> : <Send className="size-4" />}
-        Save note
+        {saving ? <Spinner className="size-3" /> : <Send className="size-3" />}
+        Save Note
       </Button>
     </div>
   );

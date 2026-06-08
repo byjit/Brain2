@@ -128,6 +128,52 @@ async def test_tool_call_without_valid_bearer_is_rejected():
                 assert result.isError
 
 
+@pytest.mark.anyio
+async def test_mcp_metadata_endpoints():
+    app = create_app(mcp_transport_security=_TEST_SECURITY)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+            # Test Protected Resource Metadata (RFC 9728)
+            resp = await client.get("/.well-known/oauth-protected-resource")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["resource"] == "http://testserver/connect/mcp"
+            assert data["authorization_servers"] == ["http://testserver"]
+
+            # Test Authorization Server Metadata (RFC 8414)
+            for path in ["/.well-known/oauth-authorization-server", "/.well-known/openid-configuration"]:
+                resp = await client.get(path)
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["issuer"] == "http://testserver"
+                assert data["authorization_endpoint"] == "http://testserver/oauth/authorize"
+                assert data["token_endpoint"] == "http://testserver/oauth/token"
+                assert "authorization_code" in data["grant_types_supported"]
+
+
+@pytest.mark.anyio
+async def test_mcp_unauthorized_connection_challenges_401():
+    app = create_app(mcp_transport_security=_TEST_SECURITY)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+            # Requesting without Authorization header should return 401 with WWW-Authenticate pointing to PRM metadata
+            resp = await client.post("/connect/mcp", json={})
+            assert resp.status_code == 401
+            assert "WWW-Authenticate" in resp.headers
+            challenge = resp.headers["WWW-Authenticate"]
+            assert 'resource_metadata="http://testserver/.well-known/oauth-protected-resource"' in challenge
+
+            # Preflight OPTIONS request should pass through with 200 (not challenged)
+            resp_options = await client.options(
+                "/connect/mcp",
+                headers={
+                    "Origin": "https://claude.ai",
+                    "Access-Control-Request-Method": "POST",
+                },
+            )
+            assert resp_options.status_code == 200
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"

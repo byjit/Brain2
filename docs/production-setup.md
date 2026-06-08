@@ -1,0 +1,262 @@
+# Brain2 — Production Setup & Deployment
+
+How to deploy Brain2 for real use: the hosted **backend** (REST + MCP + async worker),
+the **platform** dashboard, the published **Chrome extension**, and MCP-client wiring —
+plus the security, OAuth, and backup details that matter once it leaves localhost.
+
+> Behavior reference: [`spec.md`](./spec.md). Build state & open items: [`status.md`](./status.md).
+> Local-first instructions: [`local-setup.md`](./local-setup.md).
+
+---
+
+## Topology
+
+```
+                          https://app.brain2.example        (platform dashboard, static)
+                                     │  Google Sign-In, token mgmt, repair
+                                     ▼
+  Browser / Extension ─────► https://api.brain2.example     (FastAPI: REST + /oauth/* + /connect/mcp)
+  AI agents (MCP) ─────────►        │  per-user SQLite under a persistent volume
+                                     ▼
+                          /data/users/{user_id}.db  +  /data/auth.db   (must persist & be backed up)
+```
+
+Two public origins: the **API** (`api.`) and the **dashboard** (`app.`). Both must be
+served over **HTTPS**. SQLite lives on a **persistent, single-writer volume** — Brain2 is
+not designed for horizontally-scaled stateless replicas writing the same files.
+
+---
+
+## Prerequisites
+
+- A host that can run a long-lived ASGI process with a persistent disk (a VM, Fly.io,
+  Render, Railway, a container on a VPS, etc.). **Not** a stateless/ephemeral FaaS — the
+  per-user SQLite files and the in-process async enrichment worker need a durable disk and
+  a stable process.
+- TLS for both origins (managed certs or a reverse proxy such as Caddy/Nginx/Traefik).
+- A **Gemini API key** (live summarization, embeddings, auto-tagging).
+- A **Google Cloud OAuth 2.0 Client** (Web application) configured for the prod origins.
+- The extension's **published** redirect URL (depends on the final extension ID).
+
+---
+
+## 1. Backend deployment
+
+### Install & run
+
+```bash
+cd backend
+uv sync --no-dev                                 # production deps only
+# run the ASGI app (use multiple workers ONLY if they share the same disk volume;
+# SQLite is single-writer per file — keep it modest, e.g. 1 worker per box)
+uv run uvicorn brain2.main:app --host 0.0.0.0 --port 8000
+```
+
+Put it behind a TLS-terminating reverse proxy that forwards `https://api.brain2.example`
+→ `127.0.0.1:8000`, and run it under a supervisor (systemd / the platform's process
+manager) so it restarts on crash and the async worker keeps draining. The worker runs
+in the app lifespan (`create_app(enable_worker=True)`, the default).
+
+### Production environment (repo-root `.env` or real env vars)
+
+Set these for production — **never commit them**:
+
+```dotenv
+# Secrets
+GEMINI_API_KEY=...
+GOOGLE_CLIENT_ID=...apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=...
+
+# Auth / sessions — HARDEN THESE
+JWT_SECRET=<64+ chars of high entropy>           # REQUIRED: rotate the dev default out
+COOKIE_SECURE=true                               # session cookie only over HTTPS
+DASHBOARD_URL=https://app.brain2.example         # post-login redirect target
+ACCESS_TOKEN_TTL=3600                            # 1h access tokens (no refresh tokens by design)
+SESSION_TTL=1209600                              # 14d dashboard session
+
+# Exact-match OAuth redirect allowlist (comma-separated, no substrings/open redirects)
+OAUTH_REDIRECT_URIS=https://<published-extension-id>.chromiumapp.org/
+
+# Storage — point at the PERSISTENT volume
+DATA_DIR=/data/users
+AUTH_DB_PATH=/data/auth.db
+```
+
+Optional tuning (safe defaults exist; see `backend/src/brain2/config.py`):
+`GEMINI_SUMMARY_MODEL`, `GEMINI_EMBEDDING_MODEL`, `WORKER_MAX_ATTEMPTS`,
+`CANONICALIZE_THRESHOLD`, `TAGS_PER_ENTRY_MIN/MAX`, `NEAREST_TAGS_LIMIT`.
+
+> **`JWT_SECRET` is load-bearing.** It signs Brain2 access/session JWTs and OAuth codes.
+> The built-in default (`dev-insecure-secret-change-me`) is dev-only — deploying with it
+> is a critical vulnerability. Generate a fresh secret (`openssl rand -hex 48`) and keep it
+> out of source control.
+
+### Health & process checks
+
+```bash
+curl -fsS https://api.brain2.example/health      # -> {"status":"ok"}
+```
+
+Wire `/health` to your platform's liveness/readiness probe and uptime monitor.
+
+---
+
+## 2. Google OAuth (production) configuration
+
+In Google Cloud Console → **Credentials** → your **Web application** OAuth client:
+
+- **Authorized JavaScript origins:** `https://app.brain2.example`,
+  `https://api.brain2.example`
+- **Authorized redirect URIs:** `https://api.brain2.example/api/auth/callback/google`
+- Configure the **OAuth consent screen** (app name, support email, scopes:
+  `openid email profile`) and move it to **Published** for non-test users.
+
+The **extension** redirect (`https://<extension-id>.chromiumapp.org/`) goes in the
+backend's `OAUTH_REDIRECT_URIS`, **not** in Google's redirect list (it's a Brain2-issued
+authorization-code redirect, not a Google one).
+
+> [!TIP]
+> **Interactive Sign-In Redirection:**
+> If a user is not authenticated when the extension calls `GET /oauth/authorize`, the backend
+> automatically redirects the browser/popup window to the Google Sign-in flow and returns
+> them back to the authorization sequence seamlessly. Backend-only and API-key (MCP) testing is unaffected.
+
+---
+
+## 3. Platform dashboard deployment
+
+```bash
+cd platform
+pnpm install
+pnpm build                                        # vite build && tsc → dist/
+```
+
+Serve `platform/dist/` as static assets behind `https://app.brain2.example` (any static
+host/CDN: Netlify, Vercel static, Cloudflare Pages, S3+CloudFront, or your reverse proxy).
+Ensure the dashboard's API base points at `https://api.brain2.example` (configure via the
+platform's build env; check `platform/`'s env handling — it uses `@t3-oss/env-core`).
+`DASHBOARD_URL` on the backend must equal the deployed dashboard origin exactly.
+
+---
+
+## 4. Chrome extension: build & publish
+
+```bash
+cd extension
+# production env
+cat > .env <<'EOF'
+VITE_BRAIN2_API_URL=https://api.brain2.example
+VITE_BRAIN2_OAUTH_CLIENT_ID=brain2-extension
+EOF
+
+# point host_permissions at the prod API origin
+#   edit extension/wxt.config.ts: host_permissions: ["https://api.brain2.example/*"]
+#   (it derives from VITE_BRAIN2_API_URL via process.env at build time)
+
+pnpm compile && pnpm test                          # gate
+pnpm zip                                            # build + zip for the Chrome Web Store
+```
+
+Publish via the [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole):
+
+1. Upload `extension/.output/*.zip`.
+2. After the listing is created you get a **stable extension ID**. Its redirect URL is
+   `https://<extension-id>.chromiumapp.org/` — add that **exact** string to the backend's
+   `OAUTH_REDIRECT_URIS` and redeploy the backend.
+3. Submit for review. (For Firefox: `pnpm zip:firefox`.)
+
+> Keep the extension a thin capture client: all backend calls stay in the background SW,
+> which is CORS-exempt only because the prod API origin is in `host_permissions`. No
+> `<all_urls>` — the page extractor and picker are injected on a user gesture via
+> `activeTab` + `scripting`.
+
+---
+
+## 5. MCP clients in production
+
+### 5a. CLI / Desktop Clients
+Users generate a **Personal Access Token** on the dashboard (`/settings/tokens`, shown
+once) and configure their MCP client against the hosted endpoint:
+
+```json
+{
+  "mcpServers": {
+    "brain2": {
+      "url": "https://api.brain2.example/connect/mcp",
+      "headers": { "Authorization": "Bearer br2_live_..." }
+    }
+  }
+}
+```
+
+### 5b. Web Clients / Claude Web (OAuth 2.1)
+Our server implements the MCP OAuth 2.1 authorization discovery specification (RFC 9728 and RFC 8414). To connect a web-based client that natively supports this (such as Claude Web custom connectors):
+1. Add the web client's redirect callback URI (e.g. `https://claude.ai/api/mcp/auth_callback` for Claude Web) to the `OAUTH_REDIRECT_URIS` environment variable on your hosted backend.
+2. In the web client's settings, add a custom connector pointing to the MCP URL: `https://api.brain2.example/connect/mcp`.
+3. The client will automatically negotiate authorization via the discovery endpoints (`/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server` / `/.well-known/openid-configuration`), launching a browser consent screen where the user logs in and connects.
+
+Tools: `save`, `retrieve`, `delete`, `get_tags`.
+
+
+---
+
+## 6. Production smoke test
+
+After deploy:
+
+1. `curl -fsS https://api.brain2.example/health` → `{"status":"ok"}`.
+2. Dashboard: open `https://app.brain2.example`, sign in with Google, confirm
+   `GET /auth/me` returns your identity and the session cookie is `Secure`.
+3. Create an API key on the dashboard; configure an MCP client; run a `save` then a
+   `retrieve` and confirm recall.
+4. Install the published extension, sign in, save a page,
+   and confirm it lands `active` with a note + tags within a few seconds.
+5. Force a failure and confirm it surfaces in `GET /entries/failed` and via the badge,
+   then repair it.
+
+---
+
+## 7. Security checklist
+
+- [ ] `JWT_SECRET` set to a strong, unique value (not the dev default); stored as a secret.
+- [ ] `COOKIE_SECURE=true`; both origins HTTPS-only; HSTS at the proxy.
+- [ ] `OAUTH_REDIRECT_URIS` is an **exact** allowlist (the published extension redirect and
+      nothing broader); `DASHBOARD_URL` is the exact dashboard origin.
+- [ ] Google OAuth consent screen published; redirect URIs limited to
+      `https://api.brain2.example/api/auth/callback/google`.
+- [ ] `GEMINI_API_KEY` / `GOOGLE_CLIENT_SECRET` injected as secrets, never committed; the
+      repo-root `.env` and the `data/` dir (`*.db`, `auth.db`) are gitignored.
+- [ ] Backend not run with the dev default secret or `COOKIE_SECURE=false`.
+- [ ] Reverse proxy forwards the real `Origin`/`Referer`/`Host` (the cookie-authed token
+      endpoints apply Origin/Referer defense-in-depth) and sets sane request size limits.
+- [ ] Per-user DB isolation verified: each credential resolves to its own
+      `{user_id}.db`; `auth.db` lives **outside** `DATA_DIR` so the worker's `{user_id}.db`
+      scan never opens it (the default `AUTH_DB_PATH` already satisfies this).
+
+The backend went through a dedicated security review at M7 (PKCE S256, JWT alg-pinning,
+exact redirect allowlist, login-CSRF nonce, Google `id_token` aud/iss binding, hash-only
+API keys, `email_verified` enforcement) — see `status.md`. The one conscious v1 deferral:
+a single first-party OAuth client (no client allowlist / consent screen for third-party
+MCP clients).
+
+---
+
+## 8. Persistence, backups, and upgrades
+
+- **Back up the whole data volume** (`/data/users/*.db` + `/data/auth.db`). Use SQLite
+  online backup or snapshot the volume while the process is quiesced; databases run in WAL
+  mode, so include the `-wal`/`-shm` sidecars or checkpoint first.
+- **Losing `auth.db` logs everyone out and orphans API keys** (identities/key hashes live
+  there) — treat it as critical state.
+- **Upgrades:** deploy new backend code, `uv sync --no-dev`, restart the process. Schema is
+  initialized idempotently per DB on first open; there is no destructive migration step in
+  v1. The async worker re-scans `pending`/`failed` entries on startup, so in-flight
+  enrichment resumes after a restart.
+- **Scaling:** vertical first (SQLite is single-writer per file). If you must run multiple
+  app processes, they must share the same disk and you should keep writes to one worker per
+  file; do not put the SQLite volume on network storage with weak locking semantics.
+
+---
+
+For local development and the full manual-QA walkthrough, see
+[`local-setup.md`](./local-setup.md).

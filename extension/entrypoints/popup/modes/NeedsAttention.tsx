@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, CheckCircle2, Wrench } from "lucide-react";
+import { AlertCircle, CheckCircle2, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Spinner } from "@/components/ui/spinner";
@@ -46,26 +46,26 @@ export function NeedsAttention({ count }: NeedsAttentionProps) {
 
   if (count <= 0) {
     return (
-      <p className="flex items-center gap-2 text-xs text-muted-foreground">
-        <CheckCircle2 className="size-3.5" />
-        All caught up
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/30 py-2 px-3 rounded-lg border border-border/40">
+        <CheckCircle2 className="size-3.5 text-emerald-500" />
+        All captured items are active
       </p>
     );
   }
 
   return (
-    <div className="space-y-2">
-      <h2 className="flex items-center gap-2 text-sm font-medium">
-        <AlertTriangle className="size-4 text-amber-500" />
-        Needs attention
+    <div className="space-y-3">
+      <h2 className="flex items-center gap-1.5 text-xs font-semibold text-destructive uppercase tracking-wider">
+        <AlertCircle className="size-3.5 text-destructive" />
+        Needs Attention ({count})
       </h2>
       {loading ? (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
           <Spinner className="size-3.5" />
-          Loading…
+          Loading issues…
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-3 max-h-[240px] overflow-y-auto pr-1">
           {entries.map((entry) => (
             <RepairRow
               key={entry.id}
@@ -117,36 +117,36 @@ function RepairRow({
   }
 
   return (
-    <div className="rounded-md border border-border p-3 space-y-2">
-      <div className="space-y-0.5">
-        <p className="truncate text-sm font-medium" title={heading}>
+    <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 space-y-2.5 shadow-2xs">
+      <div className="space-y-1">
+        <p className="truncate text-xs font-semibold text-foreground" title={heading}>
           {heading}
         </p>
         {entry.url && (
-          <p className="truncate text-xs text-muted-foreground" title={entry.url}>
+          <p className="truncate text-[10px] text-muted-foreground" title={entry.url}>
             {entry.url}
           </p>
         )}
         {entry.error_message && (
-          <p className="text-xs text-destructive">{entry.error_message}</p>
+          <p className="text-[10px] text-destructive leading-tight font-medium bg-destructive/10 p-1.5 rounded-md border border-destructive/10">{entry.error_message}</p>
         )}
       </div>
       <Textarea
         aria-label={`Note for ${heading}`}
-        placeholder="Add a note to repair this entry…"
+        placeholder="Add summary note to manually index this entry…"
         value={note}
         onChange={(e) => setNote(e.target.value)}
         rows={2}
+        className="rounded-lg bg-background text-xs resize-none"
       />
       <Button
         size="sm"
-        variant="secondary"
-        className="w-full"
+        className="w-full h-8 bg-destructive text-destructive-foreground hover:bg-destructive/95 cursor-pointer rounded-lg text-xs font-medium gap-1.5"
         onClick={handleRepair}
         disabled={!canRepair || repairing}
       >
-        {repairing ? <Spinner className="size-4" /> : <Wrench className="size-4" />}
-        Repair
+        {repairing ? <Spinner className="size-3.5" /> : <Wrench className="size-3.5" />}
+        Repair Entry
       </Button>
     </div>
   );

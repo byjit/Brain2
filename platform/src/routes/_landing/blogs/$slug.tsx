@@ -11,6 +11,27 @@ export const Route = createFileRoute("/_landing/blogs/$slug")({
 		return { post };
 	},
 	component: BlogPostPage,
+	notFoundComponent: () => {
+		return (
+			<div className="max-w-3xl mx-auto py-16 px-6 space-y-8">
+				<div>
+					<Link
+						className="text-sm font-medium text-primary hover:underline"
+						to="/blogs"
+					>
+						← Back to Blog
+					</Link>
+				</div>
+				<div className="text-center py-12 space-y-4">
+					<h1 className="text-2xl font-bold tracking-tight">Post Not Found</h1>
+					<p className="text-muted-foreground">
+						This blog post does not exist, has been removed, or there is no
+						content available.
+					</p>
+				</div>
+			</div>
+		);
+	},
 });
 
 function BlogPostPage() {

@@ -1,5 +1,5 @@
 import fs from "fs";
-import { Anchor } from "lucide-react";
+import { Brain } from "lucide-react";
 import path from "path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -14,7 +14,7 @@ const COLOR = "#000000"; // Matching manifest theme_color
 
 // Create the element
 // increasing stroke width slightly for better visibility at small sizes if needed, but 2 is standard.
-const element = React.createElement(Anchor, {
+const element = React.createElement(Brain, {
 	size: SIZE,
 	color: COLOR,
 	strokeWidth: 2,
@@ -30,7 +30,7 @@ async function generate() {
 		fs.mkdirSync(publicDir, { recursive: true });
 	}
 
-	console.log("Generating assets from LogoIcon (Anchor)...");
+	console.log("Generating assets from LogoIcon (Brain)...");
 
 	// logo512.png
 	await sharp(svgBuffer)

@@ -30,6 +30,7 @@ def auth_client(tmp_path, monkeypatch):
 def cookie_client(tmp_path, monkeypatch):
     """A TestClient authed via the dashboard session COOKIE (the CSRF-exposed seam)."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("DASHBOARD_URL", "http://localhost:5173")
     from brain2.auth import jwt_service
     from brain2.auth.deps import SESSION_COOKIE
     from brain2.config import get_settings

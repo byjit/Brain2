@@ -49,7 +49,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     """Open the auth DB with WAL, foreign keys, and schema applied once per path."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

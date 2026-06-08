@@ -56,7 +56,7 @@ Save content from anywhere, and bring it as context to every AI agents you use.
 - **Language/Runtime**: Python 3.12 (pinned via `backend/.python-version`)
 - **Framework**: FastAPI + Uvicorn
 - **MCP**: official MCP Python SDK (`mcp`, FastMCP) mounted into FastAPI over the
-  streamable-HTTP transport at `/mcp` (the spec §6 names SSE; see backend/ARCHITECTURE.md)
+  streamable-HTTP transport at `/connect` (the spec §6 names SSE; see backend/ARCHITECTURE.md)
 - **Storage**: Per-user SQLite (`{user_id}.db`) with FTS5 (BM25 keyword search) + sqlite-vec (`vec0`, 768-dim).
   A separate central `auth.db` (default `{DATA_DIR}/../auth.db`, gitignored) holds identities,
   API-key hashes, and OAuth codes — credentials resolve to a `user_id` there before the per-user DB opens
@@ -64,7 +64,7 @@ Save content from anywhere, and bring it as context to every AI agents you use.
   CLI/Desktop, Google Sign-In + Brain2-issued OAuth 2.1 + PKCE (S256) for web/extension. Brain2 access +
   session tokens are HS256 JWTs via `pyjwt`. Google identity verification sits behind an
   `IdentityProvider` interface with an offline fake, so the suite never contacts Google. Endpoints:
-  `GET /auth/login`, `GET /auth/callback`, `GET /auth/me`, `POST /auth/logout`, `GET /oauth/authorize`,
+  `GET /auth/login`, `GET /api/auth/callback/google`, `GET /auth/me`, `POST /auth/logout`, `GET /oauth/authorize`,
   `POST /oauth/token`, and `/settings/tokens` (POST/GET/DELETE). Every REST entry endpoint and all four
   MCP tools require a valid `Bearer` credential
 - **LLM / enrichment**: `google-genai` SDK + Gemini Flash for note summarization and the
@@ -79,6 +79,17 @@ Save content from anywhere, and bring it as context to every AI agents you use.
 - **Package Manager**: uv (uses `backend/pyproject.toml` + `uv.lock`)
 
 ## Available Scripts
+
+### Root Commands (Makefile)
+
+All root commands are executed from the repository root:
+
+- `make setup`: Initialize all environment files and install dependencies for the backend, platform, and extension.
+- `make dev`: Start the FastAPI backend and platform dashboard concurrently.
+- `make dev-all`: Start the backend, platform dashboard, and Chrome extension dev servers concurrently.
+- `make test`: Run all test suites across the project (backend pytest, platform vitest, extension vitest).
+- `make build`: Build production bundles for the platform and the extension.
+- `make clean`: Clean up all node_modules, build output directories, and Python caches.
 
 ### Extension scripts
 
@@ -101,3 +112,4 @@ All backend scripts are executed from the [backend/](/backend) directory:
 - `uv sync`: Install / sync Python dependencies into `.venv`
 - `uv run pytest -q`: Run the backend test suite
 - `uv run uvicorn brain2.main:app --reload`: Start the FastAPI dev server
+

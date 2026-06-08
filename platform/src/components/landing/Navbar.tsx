@@ -7,8 +7,8 @@ export const Navbar = () => {
 	const [isOpen, setIsOpen] = useState(false);
 	const { theme, setTheme } = useTheme();
 
-  const navItems = [
-    { name: "Home", to: "/"},
+	const navItems = [
+		{ name: "Home", to: "/" },
 		{ name: "Blog", to: "/blogs" },
 		{ name: "Changelog", to: "/changelog" },
 		{ name: "GitHub", href: "https://github.com/byjit/Brain2" },
@@ -53,7 +53,7 @@ export const Navbar = () => {
 							className="inline-flex items-center whitespace-nowrap rounded-full font-medium bg-foreground text-background hover:opacity-85 transition-opacity gap-2 px-4 py-1.5 text-xs"
 							href="/login"
 						>
-							Get Started
+							Get Extension
 						</a>
 					</div>
 

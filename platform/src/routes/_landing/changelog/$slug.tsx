@@ -1,7 +1,7 @@
-import { Badge } from "@/components/ui/badge";
 import { MDXContent } from "@content-collections/mdx/react";
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { allChangelogs } from "content-collections";
+import { Badge } from "@/components/ui/badge";
 
 export const Route = createFileRoute("/_landing/changelog/$slug")({
 	loader: ({ params }) => {
@@ -37,9 +37,7 @@ function ChangelogPostPage() {
 							year: "numeric",
 						})}
 					</time>
-					{post.version && (
-						<Badge variant={'secondary'}>{post.version}</Badge>
-					)}
+					{post.version && <Badge variant={"secondary"}>{post.version}</Badge>}
 				</div>
 				<h1 className="text-2xl  font-semibold text-foreground">
 					{post.title}

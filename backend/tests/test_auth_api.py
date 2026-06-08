@@ -58,7 +58,7 @@ def test_callback_implicit_signup_creates_user_and_db(app_client, tmp_path):
     login = app_client.get("/auth/login")
     state = _extract_state(login.headers["location"])
 
-    r = app_client.get("/auth/callback", params={"code": "code-1", "state": state})
+    r = app_client.get("/api/auth/callback/google", params={"code": "code-1", "state": state})
     assert r.status_code in (302, 307)
     # A session cookie was set.
     assert SESSION_COOKIE in r.cookies or any(
@@ -72,7 +72,7 @@ def test_callback_implicit_signup_creates_user_and_db(app_client, tmp_path):
 
 
 def test_callback_rejects_bad_state(app_client):
-    r = app_client.get("/auth/callback", params={"code": "code-1", "state": "forged"})
+    r = app_client.get("/api/auth/callback/google", params={"code": "code-1", "state": "forged"})
     assert r.status_code == 400
 
 
@@ -85,26 +85,26 @@ def test_callback_rejects_state_not_bound_to_browser(app_client):
     state = _extract_state(app_client.get("/auth/login").headers["location"])
     # Drop the nonce cookie the server set, simulating a cross-browser/CSRF replay.
     app_client.cookies.clear()
-    r = app_client.get("/auth/callback", params={"code": "code-1", "state": state})
+    r = app_client.get("/api/auth/callback/google", params={"code": "code-1", "state": state})
     assert r.status_code == 400
 
 
 def test_returning_user_same_id(app_client):
     s1 = _extract_state(app_client.get("/auth/login").headers["location"])
-    app_client.get("/auth/callback", params={"code": "code-1", "state": s1})
+    app_client.get("/api/auth/callback/google", params={"code": "code-1", "state": s1})
     uid1 = app_client.get("/auth/me").json()["user_id"]
 
     # Fresh client (clear cookies), same Google sub via the same fake code.
     app_client.cookies.clear()
     s2 = _extract_state(app_client.get("/auth/login").headers["location"])
-    app_client.get("/auth/callback", params={"code": "code-1", "state": s2})
+    app_client.get("/api/auth/callback/google", params={"code": "code-1", "state": s2})
     uid2 = app_client.get("/auth/me").json()["user_id"]
     assert uid1 == uid2
 
 
 def test_logout_clears_session(app_client):
     s = _extract_state(app_client.get("/auth/login").headers["location"])
-    app_client.get("/auth/callback", params={"code": "code-1", "state": s})
+    app_client.get("/api/auth/callback/google", params={"code": "code-1", "state": s})
     assert app_client.get("/auth/me").status_code == 200
     app_client.post("/auth/logout")
     app_client.cookies.clear()
@@ -115,7 +115,7 @@ def test_logout_delete_cookie_mirrors_set_attributes(app_client):
     """The logout Set-Cookie must carry the same Path/SameSite as the session cookie so
     browsers reliably clear it (mismatched attributes can be ignored)."""
     s = _extract_state(app_client.get("/auth/login").headers["location"])
-    app_client.get("/auth/callback", params={"code": "code-1", "state": s})
+    app_client.get("/api/auth/callback/google", params={"code": "code-1", "state": s})
     r = app_client.post("/auth/logout")
     delete_headers = [
         c for c in r.headers.get_list("set-cookie") if c.startswith(f"{SESSION_COOKIE}=")
@@ -133,7 +133,7 @@ def test_session_cookie_not_accepted_as_bearer(app_client):
     cookie value leaks.
     """
     s = _extract_state(app_client.get("/auth/login").headers["location"])
-    app_client.get("/auth/callback", params={"code": "code-1", "state": s})
+    app_client.get("/api/auth/callback/google", params={"code": "code-1", "state": s})
     # Grab the raw session cookie value the server set.
     session_jwt = app_client.cookies.get(SESSION_COOKIE)
     assert session_jwt
@@ -154,7 +154,7 @@ def test_me_requires_auth(app_client):
 
 def _login(app_client):
     s = _extract_state(app_client.get("/auth/login").headers["location"])
-    app_client.get("/auth/callback", params={"code": "code-1", "state": s})
+    app_client.get("/api/auth/callback/google", params={"code": "code-1", "state": s})
 
 
 def test_oauth_pkce_happy_path(app_client):
@@ -253,7 +253,9 @@ def test_oauth_authorize_requires_login(app_client):
             "state": "x",
         },
     )
-    assert r.status_code == 401
+    assert r.status_code == 302
+    assert "/auth/login" in r.headers["location"]
+    assert "next=" in r.headers["location"]
 
 
 def test_oauth_wrong_verifier_rejected(app_client):

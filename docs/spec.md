@@ -104,8 +104,8 @@ The core promise: **whatever is saved is accessible by any AI that connects the 
 │  Toolbar popup:     │     │  FastAPI                                 │
 │   - Save page       │     │  ├─ POST  /entries   (REST, extension)   │
 │   - Select content  ├────►│  ├─ PATCH /entries/{id} (edit / repair)  │
-│   - Custom note     │     │  ├─ GET   /mcp/sse   (MCP transport)     │
-│  In-page picker      │     │  ├─ POST  /mcp/msg   (MCP transport)     │
+│   - Custom note     │     │  ├─ POST  /connect/mcp (MCP transport)   │
+│  In-page picker      │     │                                          │
 │  "Needs attention"  │     │  ├─ /oauth/* (authorize, token, PKCE)    │
 │  badge for failures │     │  └─ /settings/tokens (API Key gen)       │
 │  OAuth tokens in    │     │                                          │
@@ -508,6 +508,7 @@ Because many developer-centric MCP clients (Claude Code, Cursor, Claude Desktop)
 
 1. **Personal Access Tokens (API Keys):** For terminal/desktop environments. The user signs in via the web dashboard and generates a long-lived token passed in the MCP connection headers.
 2. **OAuth 2.1 + PKCE:** For web-based AI clients (ChatGPT Custom GPTs / Actions) and the Chrome Extension.
+3. **MCP Authorization Discovery (RFC 9728 & RFC 8414):** For web-based AI clients that natively support automatic OAuth 2.1 discovery (such as Claude Web custom connectors). The server exposes Protected Resource Metadata and OAuth Authorization Server Metadata endpoints, combined with CORS support.
 
 ```
                   ┌──────────────────────────────────┐
@@ -533,9 +534,8 @@ Because many developer-centric MCP clients (Claude Code, Cursor, Claude Desktop)
    {
      "mcpServers": {
        "brain2": {
-         "command": "npx",
-         "args": ["-y", "@brain2/mcp-bridge"],
-         "env": { "BRAIN2_API_KEY": "br2_live_..." }
+         "url": "https://api.brain2.app/connect/mcp",
+         "headers": { "Authorization": "Bearer br2_live_..." }
        }
      }
    }
@@ -545,10 +545,12 @@ Because many developer-centric MCP clients (Claude Code, Cursor, Claude Desktop)
 **Web / Extension OAuth flow:**
 
 ```
-1. User clicks "Sign in" in the Extension or triggers OAuth on a web client.
-2. Client redirects to Brain2 OAuth endpoint → Google Login → Consent.
-3. Redirect back with auth code → client exchanges it with PKCE for an access token.
+1. User clicks "Sign in" in the Extension or triggers OAuth on a web client (e.g. Claude Web custom connector).
+2. For web clients, the client automatically discovers the OAuth endpoints via standard metadata calls to `/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server` or `/.well-known/openid-configuration` (facilitated by CORS exposing `WWW-Authenticate`).
+3. Client redirects to Brain2 OAuth authorize endpoint → Google Login → Consent.
+4. Redirect back with auth code → client exchanges it with PKCE for an access token.
 ```
+
 
 **Token validation & DB routing:**
 

@@ -1,6 +1,6 @@
-import { Badge } from "@/components/ui/badge";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { allChangelogs } from "content-collections";
+import { Badge } from "@/components/ui/badge";
 
 export const Route = createFileRoute("/_landing/changelog/")({
 	component: ChangelogPage,
@@ -14,9 +14,7 @@ function ChangelogPage() {
 	return (
 		<div className="max-w-3xl mx-auto py-16 px-6">
 			<header className="mb-16  pb-8">
-				<h1 className="text-3xl font-semibold tracking-tight">
-					Changelog
-				</h1>
+				<h1 className="text-3xl font-semibold tracking-tight">Changelog</h1>
 				<p className="text-muted-foreground mt-3">
 					Stay up to date with the latest features, improvements, and releases.
 				</p>
@@ -42,15 +40,12 @@ function ChangelogPage() {
 									})}
 								</time>
 								{item.version && (
-								<Badge variant={'secondary'}>{item.version}</Badge>
+									<Badge variant={"secondary"}>{item.version}</Badge>
 								)}
 							</div>
 
 							<h2 className="text-lg font-semibold tracking-tight">
-								<Link
-									params={{ slug: item._meta.path }}
-									to="/changelog/$slug"
-								>
+								<Link params={{ slug: item._meta.path }} to="/changelog/$slug">
 									{item.title}
 								</Link>
 							</h2>

@@ -2,7 +2,7 @@
 
 Google Sign-In (dashboard):
 - GET  /auth/login    -> redirect to Google consent with a signed CSRF ``state``.
-- GET  /auth/callback -> verify state, exchange the code via the identity provider,
+- GET  /api/auth/callback/google -> verify state, exchange the code via the identity provider,
                           implicit-signup the user (+ their {user_id}.db), set the
                           httpOnly session cookie, redirect to the dashboard.
 - GET  /auth/me       -> the current session user.
@@ -24,10 +24,10 @@ import time
 from urllib.parse import urlencode
 
 import jwt as pyjwt
-from fastapi import APIRouter, Cookie, Depends, Form, HTTPException, Query, Request, status
+from fastapi import APIRouter, Cookie, Depends, Form, Header, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from brain2.auth import jwt_service, oauth_codes, users
+from brain2.auth import bearer, jwt_service, oauth_codes, users
 from brain2.auth.deps import SESSION_COOKIE, get_auth_db, get_session_user
 from brain2.auth.providers.identity import build_identity_provider
 from brain2.config import get_settings
@@ -48,33 +48,39 @@ def _redirect_uri(request: Request) -> str:
     return str(request.url_for("auth_callback"))
 
 
-def _issue_state(secret: str, nonce: str) -> str:
+def _issue_state(secret: str, nonce: str, next_url: str | None = None) -> str:
     """Sign a short-lived CSRF state token bound to a per-browser ``nonce``."""
     now = int(time.time())
+    payload = {"purpose": _STATE_PURPOSE, "nonce": nonce, "iat": now, "exp": now + _STATE_TTL}
+    if next_url:
+        payload["next"] = next_url
     return pyjwt.encode(
-        {"purpose": _STATE_PURPOSE, "nonce": nonce, "iat": now, "exp": now + _STATE_TTL},
+        payload,
         secret,
         algorithm="HS256",
     )
 
 
-def _verify_state(state: str, secret: str, nonce: str | None) -> bool:
+def _verify_state(state: str, secret: str, nonce: str | None) -> dict | None:
     """Verify the state's signature/purpose AND that its nonce matches the browser cookie.
 
     Binding the state to a per-browser nonce (set as an httpOnly cookie at ``/auth/login``)
     makes the state non-transferable: a state issued for one browser cannot be stitched into
     another browser's callback (login-CSRF defense).
+    Returns the decoded payload if valid, else None.
     """
     if not nonce:
-        return False
+        return None
     try:
         payload = pyjwt.decode(state, secret, algorithms=["HS256"], options={"require": ["exp"]})
     except pyjwt.InvalidTokenError:
-        return False
+        return None
     if payload.get("purpose") != _STATE_PURPOSE:
-        return False
+        return None
     state_nonce = payload.get("nonce")
-    return isinstance(state_nonce, str) and hmac.compare_digest(state_nonce, nonce)
+    if not isinstance(state_nonce, str) or not hmac.compare_digest(state_nonce, nonce):
+        return None
+    return payload
 
 
 def _set_session_cookie(response, user_id: str, settings) -> None:
@@ -96,7 +102,7 @@ def _set_session_cookie(response, user_id: str, settings) -> None:
 
 
 @router.get("/auth/login")
-def auth_login(request: Request) -> RedirectResponse:
+def auth_login(request: Request, next: str | None = Query(default=None)) -> RedirectResponse:
     """Redirect to Google's consent screen with a CSRF state bound to a browser nonce (§12)."""
     settings = get_settings()
     nonce = secrets.token_urlsafe(32)
@@ -105,7 +111,7 @@ def auth_login(request: Request) -> RedirectResponse:
         "redirect_uri": _redirect_uri(request),
         "response_type": "code",
         "scope": "openid email",
-        "state": _issue_state(settings.jwt_secret, nonce),
+        "state": _issue_state(settings.jwt_secret, nonce, next),
     }
     response = RedirectResponse(f"{_GOOGLE_AUTH_URL}?{urlencode(params)}", status_code=302)
     # Bind the flow to this browser: the callback requires this nonce to match the state.
@@ -120,7 +126,7 @@ def auth_login(request: Request) -> RedirectResponse:
     return response
 
 
-@router.get("/auth/callback", name="auth_callback")
+@router.get("/api/auth/callback/google", name="auth_callback")
 def auth_callback(
     request: Request,
     code: str = Query(...),
@@ -130,7 +136,8 @@ def auth_callback(
 ) -> RedirectResponse:
     """Exchange the Google code, implicit-signup the user, set the session cookie (spec §12)."""
     settings = get_settings()
-    if not _verify_state(state, settings.jwt_secret, brain2_oauth_nonce):
+    payload = _verify_state(state, settings.jwt_secret, brain2_oauth_nonce)
+    if payload is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid state")
 
     provider = build_identity_provider(settings)
@@ -141,7 +148,8 @@ def auth_callback(
         email=identity.email,
         data_dir=settings.data_dir,
     )
-    response = RedirectResponse(settings.dashboard_url, status_code=302)
+    redirect_target = payload.get("next") or settings.dashboard_url
+    response = RedirectResponse(redirect_target, status_code=302)
     _set_session_cookie(response, user_id, settings)
     # The nonce is single-use: clear it so the state cannot be replayed.
     response.delete_cookie(_STATE_NONCE_COOKIE, path="/", samesite="lax")
@@ -181,25 +189,36 @@ def auth_logout() -> JSONResponse:
 
 @router.get("/oauth/authorize")
 def oauth_authorize(
+    request: Request,
     response_type: str = Query(...),
     client_id: str = Query(...),
     redirect_uri: str = Query(...),
     code_challenge: str | None = Query(default=None),
     code_challenge_method: str | None = Query(default=None),
     state: str | None = Query(default=None),
-    user_id: str = Depends(get_session_user),
+    brain2_session: str | None = Cookie(default=None),
+    authorization: str | None = Header(default=None),
     conn: sqlite3.Connection = Depends(get_auth_db),
 ) -> RedirectResponse:
     """OAuth authorize endpoint (spec §12): validate, issue a PKCE-bound auth code.
 
-    Requires a logged-in Google session (``get_session_user``). Validates the redirect_uri
+    Requires a logged-in Google session. Validates the redirect_uri
     against the EXACT allowlist (no open redirect), requires ``response_type=code``, an S256
     ``code_challenge``, and ``state`` (CSRF). Issues a single-use, short-lived code bound to
     the challenge + redirect_uri, then redirects back to the client with ``code`` + ``state``.
+    If not authenticated, redirects the browser to the login flow with the current URL preserved.
     """
     settings = get_settings()
     # Exact-match allowlist — never substring; reject before anything else.
-    if redirect_uri not in settings.oauth_redirect_uris:
+    # Developer convenience: if the template 'https://<extension-id>.chromiumapp.org/' is in the allowlist,
+    # we allow any valid chrome extension redirect URI in development.
+    is_allowed = redirect_uri in settings.oauth_redirect_uris
+    if not is_allowed and "https://<extension-id>.chromiumapp.org/" in settings.oauth_redirect_uris:
+        import re
+        if re.match(r"^https://[a-z]{32}\.chromiumapp\.org/?$", redirect_uri):
+            is_allowed = True
+
+    if not is_allowed:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="redirect_uri not allowed")
     if response_type != "code":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported response_type")
@@ -210,6 +229,22 @@ def oauth_authorize(
     # PKCE must be S256 — 'plain' is explicitly rejected (security constraint).
     if code_challenge_method != "S256":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="code_challenge_method must be S256")
+
+    # Resolve session user manually to allow redirect on unauthenticated.
+    user_id = None
+    if brain2_session:
+        user_id = jwt_service.verify_token(
+            brain2_session, secret=settings.jwt_secret, expected_typ="session"
+        )
+    if user_id is None:
+        user_id = bearer.resolve_bearer(authorization, conn=conn, secret=settings.jwt_secret)
+
+    if user_id is None:
+        # Build the login redirect URL, preserving the current authorize URL with its query parameters.
+        query_str = str(request.query_params)
+        next_path = f"{request.url.path}?{query_str}" if query_str else request.url.path
+        login_url = f"/auth/login?{urlencode({'next': next_path})}"
+        return RedirectResponse(login_url, status_code=302)
 
     code = oauth_codes.issue_code(
         conn,
@@ -254,3 +289,44 @@ def oauth_token(
             "expires_in": settings.access_token_ttl,
         }
     )
+
+
+# --- OAuth Discovery Metadata (RFC 9728 & RFC 8414) -----------------------------------
+
+
+@router.get("/.well-known/oauth-protected-resource")
+def get_protected_resource_metadata(request: Request) -> JSONResponse:
+    """Protected Resource Metadata (RFC 9728) for the MCP server.
+
+    Advertises the authorization servers that this resource server trusts.
+    """
+    base_url = str(request.base_url).rstrip("/")
+    return JSONResponse(
+        {
+            "resource": f"{base_url}/connect/mcp",
+            "authorization_servers": [base_url],
+        }
+    )
+
+
+@router.get("/.well-known/oauth-authorization-server")
+@router.get("/.well-known/openid-configuration")
+def get_oauth_authorization_server_metadata(request: Request) -> JSONResponse:
+    """OAuth 2.1 Authorization Server Metadata (RFC 8414 / OIDC discovery).
+
+    Lists our authorization and token endpoints and supported grants.
+    """
+    base_url = str(request.base_url).rstrip("/")
+    return JSONResponse(
+        {
+            "issuer": base_url,
+            "authorization_endpoint": f"{base_url}/oauth/authorize",
+            "token_endpoint": f"{base_url}/oauth/token",
+            "scopes_supported": ["openid", "email"],
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code"],
+            "code_challenge_methods_supported": ["S256"],
+            "token_endpoint_auth_methods_supported": ["none"],
+        }
+    )
+

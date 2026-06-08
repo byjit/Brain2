@@ -11,7 +11,9 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from mcp.server.transport_security import TransportSecuritySettings
 
 from brain2.api import auth as auth_api
@@ -21,7 +23,7 @@ from brain2.services.worker import run_worker_loop
 
 # Path under which the MCP transport is mounted; the SDK serves the endpoint at
 # ``{MCP_MOUNT}/mcp`` (streamable HTTP). Documented in ARCHITECTURE.md.
-MCP_MOUNT = "/mcp"
+MCP_MOUNT = "/connect"
 
 
 def create_app(
@@ -60,6 +62,41 @@ def create_app(
         description="Per-user SQLite memory store. Save once, recall anywhere over MCP.",
         lifespan=lifespan,
     )
+
+    # Configure CORS to allow access from Claude Web and other clients, exposing headers
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "https://claude.ai",
+            "https://chat.openai.com",
+            "http://localhost:3000",
+            "http://localhost:5173",
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["WWW-Authenticate"],
+    )
+
+    @app.middleware("http")
+    async def mcp_auth_challenge_middleware(request: Request, call_next):
+        """MCP connection-level authorization challenge middleware (spec §12).
+
+        Bypasses CORS OPTIONS requests. Challenges missing Authorization headers with
+        a 401 response pointing to the Protected Resource Metadata endpoint.
+        """
+        path = request.url.path
+        if (path == f"{MCP_MOUNT}/mcp" or path.startswith(f"{MCP_MOUNT}/mcp/")) and request.method != "OPTIONS":
+            auth_header = request.headers.get("authorization")
+            if not auth_header:
+                base_url = str(request.base_url).rstrip("/")
+                metadata_url = f"{base_url}/.well-known/oauth-protected-resource"
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Unauthorized"},
+                    headers={"WWW-Authenticate": f'Bearer resource_metadata="{metadata_url}"'},
+                )
+        return await call_next(request)
 
     @app.get("/health", tags=["health"])
     def health() -> dict[str, str]:

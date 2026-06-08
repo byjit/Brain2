@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ChevronsUpDown, Link2, Save } from "lucide-react";
+import { ChevronDown, Link2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +28,7 @@ export function SavePage({ onSignedOut }: SavePageProps) {
   const [savingPage, setSavingPage] = useState(false);
   const [savingUrl, setSavingUrl] = useState(false);
   const [overrideUrl, setOverrideUrl] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
 
   // Guards post-await state updates: a signed-out error unmounts this
   // component (App swaps in <SignIn>), so the in-flight flags must not be
@@ -73,49 +74,50 @@ export function SavePage({ onSignedOut }: SavePageProps) {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2.5">
       <Button
         size="lg"
-        className="w-full"
+        className="w-full h-10 bg-primary text-primary-foreground hover:bg-primary/95 cursor-pointer rounded-lg font-medium text-xs gap-1.5 shadow-xs transition-colors"
         onClick={handleSavePage}
         disabled={savingPage}
       >
-        {savingPage ? <Spinner className="size-4" /> : <Save className="size-4" />}
-        Save this page
+        {savingPage ? <Spinner className="size-3.5" /> : <Save className="size-3.5" />}
+        Save Current Page
       </Button>
 
-      <Collapsible>
+      <Collapsible open={isOpen} onOpenChange={setIsOpen}>
         <CollapsibleTrigger asChild>
           <Button
             variant="ghost"
             size="sm"
-            className="w-full justify-between text-muted-foreground"
+            className="w-full justify-between text-muted-foreground hover:bg-accent/40 rounded-md h-7 px-1.5 cursor-pointer transition-colors"
           >
-            <span className="flex items-center gap-2">
-              <Link2 className="size-4" />
+            <span className="flex items-center gap-1.5 text-[11px] font-medium">
+              <Link2 className="size-3" />
               Save a different URL
             </span>
-            <ChevronsUpDown className="size-4" />
+            <ChevronDown className={`size-3 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />
           </Button>
         </CollapsibleTrigger>
-        <CollapsibleContent className="pt-2 space-y-2">
-          <div className="space-y-1.5">
-            <Label htmlFor="override-url">URL</Label>
+        <CollapsibleContent className="pt-1.5 space-y-2">
+          <div className="space-y-1">
+            <Label htmlFor="override-url" className="text-[10px] font-medium text-muted-foreground">URL Path</Label>
             <Input
               id="override-url"
               type="url"
               placeholder="https://example.com/article"
               value={overrideUrl}
               onChange={(e) => setOverrideUrl(e.target.value)}
+              className="h-8 rounded-md text-[11px]"
             />
           </div>
           <Button
             variant="secondary"
-            className="w-full"
+            className="w-full h-8 rounded-md text-[11px] font-medium gap-1 cursor-pointer transition-colors"
             onClick={handleSaveUrl}
             disabled={savingUrl || !overrideUrl.trim()}
           >
-            {savingUrl ? <Spinner className="size-4" /> : <Save className="size-4" />}
+            {savingUrl ? <Spinner className="size-3" /> : <Save className="size-3" />}
             Save URL
           </Button>
         </CollapsibleContent>
