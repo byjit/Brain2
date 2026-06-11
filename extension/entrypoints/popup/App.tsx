@@ -67,7 +67,7 @@ function App() {
 
       {auth === "signed-in" && (
         <div className="space-y-3.5">
-          <header className="flex items-center justify-between pb-1">
+          <header className="flex items-center justify-between pb-2 mb-2 border-b border-border/40">
             <div className="flex items-center gap-1.5">
               <Brain className="size-4.5 text-primary" />
               <span className="text-xs font-bold tracking-tight text-foreground">Brain2</span>
@@ -77,7 +77,7 @@ function App() {
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted gap-1 px-2 rounded-md cursor-pointer transition-colors"
+                className="h-7 text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted gap-1 px-2 rounded-md cursor-pointer transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                 onClick={openDashboard}
               >
                 <ExternalLink className="size-3" />
@@ -95,7 +95,7 @@ function App() {
 
           <Button
             variant="outline"
-            className="w-full h-9 border-border/80 hover:bg-accent/50 hover:text-accent-foreground cursor-pointer rounded-lg font-medium text-xs gap-1.5 transition-all"
+            className="w-full h-9 border-border/80 hover:bg-accent/50 hover:text-accent-foreground cursor-pointer rounded-lg font-medium text-xs gap-1.5 transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
             onClick={handlePicker}
           >
             <MousePointerClick className="size-3.5 text-muted-foreground" />

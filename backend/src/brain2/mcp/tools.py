@@ -10,7 +10,7 @@ from brain2.config import get_settings
 from brain2.db.connection import open_user_db
 from brain2.mcp import auth
 from brain2.models.entries import CreateEntryRequest
-from brain2.services.entries import delete_entry, save_entry
+from brain2.services.entries import delete_entry, list_entries, save_entry
 from brain2.services.providers.factory import build_providers
 from brain2.services.search import hybrid_search
 from brain2.services.tagging import apply_agent_tags
@@ -96,6 +96,37 @@ def retrieve_tool(
     _, _, embedder = build_providers(get_settings())
     with _open_current_user_db() as conn:
         return hybrid_search(conn, query, embedder=embedder, tags=tags, type=type, limit=limit)
+
+
+def list_tool(
+    *,
+    tags: list[str] | None = None,
+    saved_after: str | None = None,
+    saved_before: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> list[dict]:
+    """Deterministic entry listing for the current user (spec §10 list).
+
+    The browse/filter complement to ``retrieve``: filter by ``tags`` (ANY match) and/or a
+    ``saved_at`` date range, ordered newest-first, paged via ``limit``/``offset``. Returns
+    only active entries in the compact result shape (no relevance ``score``).
+    """
+    # Validate at the boundary so a direct/REST caller gets a clear error, not a raw
+    # SQLite failure (the MCP layer additionally constrains these via Field bounds).
+    if limit < 0:
+        raise ValueError("limit must be >= 0")
+    if offset < 0:
+        raise ValueError("offset must be >= 0")
+    with _open_current_user_db() as conn:
+        return list_entries(
+            conn,
+            tags=tags,
+            saved_after=saved_after,
+            saved_before=saved_before,
+            limit=limit,
+            offset=offset,
+        )
 
 
 def delete_tool(*, id: str) -> dict:

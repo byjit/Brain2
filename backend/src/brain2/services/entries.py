@@ -13,6 +13,7 @@ from nanoid import generate
 from brain2.models.entries import CreateEntryRequest, EntryType, SaveEntryResponse, SaveStatus
 from brain2.services.content import persisted_content
 from brain2.services.fts import index_entry, remove_entry
+from brain2.services.projection import compact_entry
 from brain2.services.providers.embedder import Embedder
 from brain2.services.tag_counters import decrement_for_tags
 from brain2.services.url_normalize import normalize_url
@@ -198,6 +199,70 @@ def failed_entries(conn: sqlite3.Connection) -> list[sqlite3.Row]:
          ORDER BY updated_at DESC
         """
     ).fetchall()
+
+
+def list_entries(
+    conn: sqlite3.Connection,
+    *,
+    tags: list[str] | None = None,
+    saved_after: str | None = None,
+    saved_before: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> list[dict]:
+    """Deterministic, newest-first listing of a user's entries (spec §10 list).
+
+    The browse/filter complement to ``retrieve``: no search query, no relevance ranking.
+    Filters are optional and ANDed together, then results are ordered by ``saved_at``
+    descending and paged with ``limit``/``offset``. With no filters it returns the most
+    recent saves.
+
+    Args:
+        tags: If given, keep entries carrying ANY of these tags (union) — unlike
+            ``retrieve``'s conjunctive pre-filter, ``list`` browses by topic.
+        saved_after: Inclusive lower bound on ``saved_at`` (ISO-8601 UTC). ISO-8601 UTC
+            sorts lexically as it does chronologically, so this is a plain string compare.
+        saved_before: Inclusive upper bound on ``saved_at`` (ISO-8601 UTC).
+        limit: Maximum entries (default 20).
+        offset: Entries to skip, for paging (default 0).
+
+    Returns:
+        Compact result dicts (``id, url, title, tags, note, content, type, saved_at``),
+        newest first. Only ``active`` entries are returned — pending/failed rows aren't
+        ready to surface (failures live in the §7.4 repair surface instead).
+    """
+    # Boundary guards: a negative limit becomes SQLite 'LIMIT -1' (unbounded) and a
+    # negative offset is a silent SQL error; reject both with a clear message.
+    if limit < 0:
+        raise ValueError("limit must be >= 0")
+    if offset < 0:
+        raise ValueError("offset must be >= 0")
+
+    where = ["status = 'active'"]
+    params: list = []
+    if tags:
+        placeholders = ",".join("?" for _ in tags)
+        # ANY-tag (union): no GROUP BY/HAVING, so an entry matches if it carries any tag.
+        where.append(f"id IN (SELECT entry_id FROM entry_tags WHERE tag IN ({placeholders}))")
+        params.extend(tags)
+    if saved_after is not None:
+        where.append("saved_at >= ?")
+        params.append(saved_after)
+    if saved_before is not None:
+        where.append("saved_at <= ?")
+        params.append(saved_before)
+
+    # Tie-break by id so entries sharing a saved_at paginate in a stable order.
+    sql = f"""
+        SELECT id, url, title, note, content, type, saved_at
+          FROM entries
+         WHERE {" AND ".join(where)}
+         ORDER BY saved_at DESC, id DESC
+         LIMIT ? OFFSET ?
+    """
+    params.extend([limit, offset])
+    rows = conn.execute(sql, params).fetchall()
+    return [compact_entry(conn, row) for row in rows]
 
 
 def delete_entry(conn: sqlite3.Connection, entry_id: str) -> bool:

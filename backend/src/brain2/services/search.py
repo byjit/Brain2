@@ -16,6 +16,7 @@ import re
 import sqlite3
 
 from brain2.services.prefilter import entry_ids_with_all_tags
+from brain2.services.projection import compact_entry
 from brain2.services.providers.embedder import Embedder
 from brain2.services.vector import vector_search
 
@@ -58,14 +59,6 @@ def _like_clause(token: str) -> tuple[str, list[str]]:
     cols = ("entries_fts.title", "entries_fts.tags_text", "entries_fts.content")
     clause = "(" + " OR ".join(f"{c} LIKE ? ESCAPE '\\'" for c in cols) + ")"
     return clause, [pattern] * len(cols)
-
-
-def _tags_for(conn: sqlite3.Connection, entry_id: str) -> list[str]:
-    """Tags attached to an entry, for the compact result shape."""
-    rows = conn.execute(
-        "SELECT tag FROM entry_tags WHERE entry_id = ? ORDER BY tag", (entry_id,)
-    ).fetchall()
-    return [row[0] for row in rows]
 
 
 def search_entries(
@@ -138,23 +131,10 @@ def search_entries(
     params.append(limit)
     rows = conn.execute(sql, params).fetchall()
 
-    return [
-        {
-            "id": row["id"],
-            "url": row["url"],
-            "title": row["title"],
-            "tags": _tags_for(conn, row["id"]),
-            "note": row["note"],
-            # Pre-enrichment (M2) the note is NULL until summarization; surface the
-            # stored body so the agent can read what BM25 matched on (spec §10, §15).
-            "content": row["content"],
-            "type": row["type"],
-            "saved_at": row["saved_at"],
-            # bm25() is negative-better; negate so higher == more relevant.
-            "score": -float(row["rank"]),
-        }
-        for row in rows
-    ]
+    # bm25() is negative-better; negate so higher == more relevant. Pre-enrichment (M2)
+    # the note is NULL until summarization, but compact_entry still surfaces the stored
+    # body so the agent can read what BM25 matched on (spec §10, §15).
+    return [compact_entry(conn, row, score=-float(row["rank"])) for row in rows]
 
 
 # Candidate pool per leg before fusion. We over-fetch beyond the final ``limit`` so an
@@ -173,17 +153,7 @@ def _project_entry(conn: sqlite3.Connection, entry_id: str, score: float) -> dic
         "SELECT id, url, title, note, content, type, saved_at FROM entries WHERE id = ?",
         (entry_id,),
     ).fetchone()
-    return {
-        "id": row["id"],
-        "url": row["url"],
-        "title": row["title"],
-        "tags": _tags_for(conn, row["id"]),
-        "note": row["note"],
-        "content": row["content"],
-        "type": row["type"],
-        "saved_at": row["saved_at"],
-        "score": score,
-    }
+    return compact_entry(conn, row, score=score)
 
 
 def hybrid_search(

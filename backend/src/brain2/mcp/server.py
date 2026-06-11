@@ -32,8 +32,8 @@ class SaveOutput(BaseModel):
     status: str = Field(description="'saved' for a new entry, 'updated' for an existing URL")
 
 
-class RetrieveResult(BaseModel):
-    """One compact search hit (spec §10 result shape)."""
+class ListResult(BaseModel):
+    """One compact entry in a deterministic listing (spec §10 shape, no relevance score)."""
 
     id: str
     url: str | None
@@ -43,6 +43,11 @@ class RetrieveResult(BaseModel):
     content: str | None
     type: str
     saved_at: str
+
+
+class RetrieveResult(ListResult):
+    """One compact search hit — the §10 shape plus a relevance ``score``."""
+
     score: float
 
 
@@ -168,6 +173,54 @@ def build_mcp_server(transport_security: TransportSecuritySettings | None = None
                 limit=limit,
             )
         return [RetrieveResult(**hit) for hit in hits]
+
+    @mcp.tool(
+        name="list",
+        annotations={
+            "title": "List Brain2 entries",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
+    def list_(
+        ctx: Context,
+        tags: Annotated[
+            list[str] | None,
+            Field(description="Filter to entries carrying ANY of these tags (union); omit for all tags"),
+        ] = None,
+        saved_after: Annotated[
+            str | None,
+            Field(description="Inclusive lower bound on saved_at (ISO-8601 UTC, e.g. 2026-05-01T00:00:00Z)"),
+        ] = None,
+        saved_before: Annotated[
+            str | None,
+            Field(description="Inclusive upper bound on saved_at (ISO-8601 UTC)"),
+        ] = None,
+        limit: Annotated[int, Field(ge=1, le=100, description="Maximum entries (default 20)")] = 20,
+        offset: Annotated[int, Field(ge=0, description="Entries to skip, for paging (default 0)")] = 0,
+    ) -> list[ListResult]:
+        """List the user's saved entries by filter, newest first — no search query.
+
+        The deterministic browse/filter complement to ``retrieve``: filter by ``tags``
+        (entry carries ANY of them) and/or a ``saved_at`` date range, ordered newest-first
+        and paged via ``limit``/``offset``. Only active (fully processed) entries are
+        returned; with no filters it returns the most recent saves.
+
+        Returns:
+            list[ListResult]: id, url, title, tags, note, content, type, saved_at.
+        """
+        user_id = _resolve_user(ctx)
+        with auth.user_scope(user_id):
+            rows = tools.list_tool(
+                tags=tags,
+                saved_after=saved_after,
+                saved_before=saved_before,
+                limit=limit,
+                offset=offset,
+            )
+        return [ListResult(**row) for row in rows]
 
     @mcp.tool(
         name="delete",

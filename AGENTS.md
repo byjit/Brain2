@@ -65,8 +65,8 @@ Save content from anywhere, and bring it as context to every AI agents you use.
   session tokens are HS256 JWTs via `pyjwt`. Google identity verification sits behind an
   `IdentityProvider` interface with an offline fake, so the suite never contacts Google. Endpoints:
   `GET /auth/login`, `GET /api/auth/callback/google`, `GET /auth/me`, `POST /auth/logout`, `GET /oauth/authorize`,
-  `POST /oauth/token`, and `/settings/tokens` (POST/GET/DELETE). Every REST entry endpoint and all four
-  MCP tools require a valid `Bearer` credential
+  `POST /oauth/token`, and `/settings/tokens` (POST/GET/DELETE). Every REST entry endpoint and every
+  MCP tool requires a valid `Bearer` credential
 - **LLM / enrichment**: `google-genai` SDK + Gemini Flash for note summarization and the
   M5 single combined auto-tagging call (structured output: note + tags + new-tag
   descriptions), `gemini-embedding-001` (768-dim) for note/query/tag-description embeddings

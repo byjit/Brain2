@@ -208,6 +208,28 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
     sourceUrl: string,
     title: string,
   ): void {
+    const backdrop = document.createElement("div");
+    Object.assign(backdrop.style, {
+      position: "fixed",
+      top: "0",
+      left: "0",
+      width: "100vw",
+      height: "100vh",
+      background: "rgba(15, 23, 42, 0.3)",
+      backdropFilter: "blur(4px)",
+      webkitBackdropFilter: "blur(4px)",
+      opacity: "0",
+      transition: "opacity 0.25s ease",
+      zIndex: "2147483646",
+    } satisfies Partial<CSSStyleDeclaration>);
+    backdrop.addEventListener("click", () => ui.remove());
+    container.appendChild(backdrop);
+
+    // Trigger opacity transition
+    requestAnimationFrame(() => {
+      backdrop.style.opacity = "1";
+    });
+
     const card = document.createElement("div");
     Object.assign(card.style, {
       position: "fixed",
@@ -224,7 +246,7 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
       color: "#0f172a",
       border: "1px solid rgba(99, 102, 241, 0.15)",
       borderRadius: "16px",
-      boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(99, 102, 241, 0.1)",
+      boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(99, 102, 241, 0.12)",
       font: "14px/1.5 system-ui, -apple-system, sans-serif",
       zIndex: "2147483647",
     } satisfies Partial<CSSStyleDeclaration>);

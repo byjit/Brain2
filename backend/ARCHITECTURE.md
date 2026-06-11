@@ -56,8 +56,8 @@ backend/
 │   │       └── factory.py       # build_providers + build_tagging_providers: real-vs-fake by config
 │   ├── mcp/
 │   │   ├── auth.py           # Bearer -> user_id resolution + per-request user ContextVar
-│   │   ├── tools.py          # transport-free save/retrieve/delete/get_tags tool logic (reuses services)
-│   │   └── server.py         # FastMCP server (streamable HTTP) exposing all four spec §10 tools
+│   │   ├── tools.py          # transport-free save/retrieve/list/delete/get_tags tool logic (reuses services)
+│   │   └── server.py         # FastMCP server (streamable HTTP) exposing the spec §10 tools + list
 │   └── api/
 │       ├── entries.py        # POST /entries + GET /entries/failed + PATCH /entries/{id} repair
 │       ├── auth.py           # /auth/login,callback,me,logout + /oauth/authorize,token (PKCE)
@@ -179,6 +179,14 @@ backend/
     50) tags with `name`/`description`/`count` and `co_occurs_with` (top co-occurring names,
     both pair directions, zero-count pairs excluded). `sort` is `count` (default desc) or
     `name` (asc); no other knobs (YAGNI).
+  - `entries.list_entries` — the `list` read model (spec §10): deterministic, newest-first
+    browse complement to `retrieve` (no search query, no relevance score). Optional `tags`
+    (ANY-match union, unlike retrieve's conjunctive pre-filter) and `saved_at` range
+    (`saved_after`/`saved_before`, inclusive lexical bounds on the ISO-8601 column) ANDed in
+    one SQL statement, ordered `saved_at DESC, id DESC`, paged via `limit`/`offset`. Returns
+    only `active` entries (pending/failed aren't ready to surface). Shares the
+    `projection.compact_entry` row→dict mapping with `search` (DRY). Backed by the
+    `idx_entries_status_saved_at` index.
   - `repair.repair_entry` — the §7.4 PATCH flow. Sets note=user text, note_source='user',
     clears `error_message`, resets `attempts`/`next_retry_at`, then re-enters the SAME
     enrichment path the worker uses (`tagging.apply_tags`) with the basis forced to the
@@ -284,21 +292,23 @@ backend/
   - `auth.resolve_token_to_user_id` — maps a `Bearer <token>` header to a `user_id` by
     opening `auth.db` and routing through `auth.bearer.resolve_bearer` (API key OR Brain2
     JWT), returning None for an invalid/expired/revoked credential (M7, spec §10/§12). All
-    four tools reject unauthenticated calls. `user_scope` / `current_user_id` bind the
+    tools reject unauthenticated calls. `user_scope` / `current_user_id` bind the
     resolved user in a `ContextVar` for the request.
-  - `tools.{save,retrieve,delete,get_tags}_tool` — transport-free tool logic. They resolve
+  - `tools.{save,retrieve,list,delete,get_tags}_tool` — transport-free tool logic. They resolve
     the current user, open that user's DB, and **delegate to the shared services** so REST
     and MCP have one implementation (DRY): `save_tool`→`save_entry` (+ `apply_agent_tags`
-    when `tags` are given), `retrieve_tool`→`hybrid_search`, `delete_tool`→`delete_entry`,
-    `get_tags_tool`→`tags_service.list_tags`. Per spec §10 `save` treats `note` as authored
+    when `tags` are given), `retrieve_tool`→`hybrid_search`, `list_tool`→`list_entries`,
+    `delete_tool`→`delete_entry`, `get_tags_tool`→`tags_service.list_tags`. Per spec §10
+    `save` treats `note` as authored
     text: for `type=note` it is the user's note (its only copy → `captured_text`); for
     URL-backed types it is the override that skips summarization. Optional `save` `tags` are
     agent-supplied: canonicalized + merged additively (so the agent cannot fragment the
     vocabulary), while automatic worker tagging still runs.
-  - `server.build_mcp_server` — FastMCP server `brain2_mcp` exposing all four spec §10
-    tools: `save` (destructive/idempotent upsert), `retrieve` (readOnly), `delete`
-    (readOnly=false, destructive, idempotent — removes the entry + derived data and
-    decrements counters), and `get_tags` (readOnly, paged landscape). Flat, typed tool
+  - `server.build_mcp_server` — FastMCP server `brain2_mcp` exposing the spec §10 tools plus
+    `list`: `save` (destructive/idempotent upsert), `retrieve` (readOnly hybrid search),
+    `list` (readOnly deterministic browse/filter — tag ANY-match + saved_at range, newest
+    first, paged), `delete` (readOnly=false, destructive, idempotent — removes the entry +
+    derived data and decrements counters), and `get_tags` (readOnly, paged landscape). Flat, typed tool
     parameters (clean `inputSchema`) and typed returns (structured output). Each tool reads
     the request's Bearer header, resolves the user, and runs inside `auth.user_scope`.
 
@@ -414,7 +424,7 @@ central `auth.db`, rejecting unauthenticated calls.
   assert real behavior.
 - **Per-user isolation.** All DB access flows through `get_db` so routing to
   `{user_id}.db` is centralized; never open ad-hoc connections in routes/services.
-- **Auth (M7, spec §12).** Every REST entry endpoint and all four MCP tools authenticate a
+- **Auth (M7, spec §12).** Every REST entry endpoint and every MCP tool authenticate a
   `Bearer` credential and resolve it to a `user_id` via the central `auth.db` BEFORE the
   per-user DB opens. Store ONLY SHA-256 hashes of API keys (never the raw key; shown once);
   verify with constant-time compare. JWTs pin the algorithm and require `exp`. PKCE is S256

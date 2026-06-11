@@ -35,13 +35,13 @@ export function SignIn({ onSignedIn }: SignInProps) {
   }
 
   return (
-    <div className="flex flex-col items-center text-center py-4 px-2 space-y-6">
+    <div className="flex flex-col items-center text-center py-5 px-2 space-y-6">
       <div className="space-y-3 flex flex-col items-center">
-        <div className="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary shadow-xs">
-          <Brain className="size-7 animate-pulse" />
+        <div className="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary shadow-xs transition-transform duration-300 hover:scale-105">
+          <Brain className="size-7 animate-pulse text-primary/90" />
         </div>
-        <div className="space-y-1">
-          <h1 className="text-xl font-bold tracking-tight">Welcome to Brain2</h1>
+        <div className="space-y-1.5">
+          <h1 className="text-xl font-bold tracking-tight text-foreground">Welcome to Brain2</h1>
           <p className="text-xs text-muted-foreground max-w-[260px] mx-auto leading-relaxed">
             Save anything you read or write, and instantly bring it as context to all of your AI agents.
           </p>
@@ -49,12 +49,12 @@ export function SignIn({ onSignedIn }: SignInProps) {
       </div>
       
       <Button
-        className="w-full h-11 bg-primary text-primary-foreground hover:bg-primary/95 cursor-pointer rounded-xl font-semibold text-sm gap-2.5 shadow-sm transition-colors"
+        className="w-full h-11 bg-primary text-primary-foreground hover:bg-primary/95 cursor-pointer rounded-xl font-semibold text-sm gap-2.5 shadow-sm transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50"
         onClick={handleSignIn}
         disabled={loading}
       >
         {loading ? (
-          <Spinner className="size-4" />
+          <Spinner className="size-4 animate-spin" />
         ) : (
           <LogIn className="size-4" />
         )}

@@ -67,7 +67,7 @@ The core promise: **whatever is saved is accessible by any AI that connects the 
 | Structured-source tags          | Free, high-confidence tags pulled from page metadata before any LLM inference: GitHub repo topics + detected language + README, OG/meta keywords. Used as priors, not guesses                                                 |
 | Failure recovery                | Entries whose background processing fails (after retries) are flagged and surfaced to the user, who can fill the note to recover them (see §7.4, §8)                                                                          |
 | Tags as the graph               | The only organizational primitive - flat, multi-assignable. Same concept as "spaces." No distinction. Structure emerges from shared tags + co-occurrence                                                                      |
-| Remote MCP server (hosted)      | Four tools: `save`, `retrieve`, `delete`, `get_tags`. Users paste the MCP URL into their AI app                                                                                                                               |
+| Remote MCP server (hosted)      | Five tools: `save`, `retrieve`, `list`, `delete`, `get_tags`. Users paste the MCP URL into their AI app                                                                                                                       |
 | Hybrid search                   | BM25 on title + tags + persisted content; vector on note; merged with RRF. Related-tag expansion fuses embedding similarity + co-occurrence + lexical match (see §11)                                                         |
 | Per-user SQLite DB              | Each user gets an isolated `{user_id}.db`; FTS5 + sqlite-vec in the same file                                                                                                                                                 |
 | Hybrid Auth & API Keys          | Personal Access Tokens (API keys) for CLI/Desktop (Claude Code, Cursor); OAuth 2.1 for web app & Extension                                                                                                                    |
@@ -382,7 +382,9 @@ The graph emerges from usage: at 30 entries it's just filters; at thousands it's
 
 ## 10. MCP Tools
 
-The MCP server exposes exactly four tools. All require a valid API Key or OAuth access token as a Bearer token.
+The MCP server exposes five tools. All require a valid API Key or OAuth access token as a Bearer token.
+
+`retrieve` and `list` are complementary read paths: `retrieve` ranks by relevance (hybrid BM25 + vector) and needs a query; `list` is a deterministic browse/filter (tag + date range, newest-first, paged) with no query and no relevance score — for "show me everything tagged X from last month" rather than "find the thing about Y".
 
 ### `save`
 
@@ -430,6 +432,36 @@ All filter fields optional. `tags` and `type` are applied as pre-filters before 
     "type": "page",
     "saved_at": "2026-05-20T14:23:00Z",
     "score": 0.91
+  }
+]
+```
+
+### `list`
+
+Deterministic browse/filter — no search query, no relevance ranking. Filter by tag and/or a `saved_at` date range, ordered newest-first, paged. The complement to `retrieve`'s relevance search.
+
+```json
+{
+  "tags": ["rust"],
+  "saved_after": "2026-05-01T00:00:00Z",
+  "saved_before": "2026-06-01T00:00:00Z",
+  "limit": 20,
+  "offset": 0
+}
+```
+
+All fields optional. `tags` match **ANY** (union — an entry carrying any of them qualifies), deliberately unlike `retrieve`'s conjunctive (ALL) pre-filter, because `list` browses by topic. `saved_after` / `saved_before` are inclusive bounds on `saved_at`. Only `active` entries are returned (pending/failed aren't ready to surface; failures live in the §7.4 repair surface). With no filters it returns the most recent saves. Results use the same compact shape as `retrieve` minus `score`:
+
+```json
+[
+  {
+    "id": "abc123",
+    "url": "https://...",
+    "title": "hyper - fast HTTP for Rust",
+    "tags": ["rust", "http", "async"],
+    "note": "Fast async HTTP client for Rust",
+    "type": "page",
+    "saved_at": "2026-05-20T14:23:00Z"
   }
 ]
 ```

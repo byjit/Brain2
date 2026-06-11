@@ -77,11 +77,11 @@ export function SavePage({ onSignedOut }: SavePageProps) {
     <div className="space-y-2.5">
       <Button
         size="lg"
-        className="w-full h-10 bg-primary text-primary-foreground hover:bg-primary/95 cursor-pointer rounded-lg font-medium text-xs gap-1.5 shadow-xs transition-colors"
+        className="w-full h-10 bg-primary text-primary-foreground hover:bg-primary/95 cursor-pointer rounded-lg font-medium text-xs gap-1.5 shadow-xs transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50"
         onClick={handleSavePage}
         disabled={savingPage}
       >
-        {savingPage ? <Spinner className="size-3.5" /> : <Save className="size-3.5" />}
+        {savingPage ? <Spinner className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
         Save Current Page
       </Button>
 
@@ -90,7 +90,7 @@ export function SavePage({ onSignedOut }: SavePageProps) {
           <Button
             variant="ghost"
             size="sm"
-            className="w-full justify-between text-muted-foreground hover:bg-accent/40 rounded-md h-7 px-1.5 cursor-pointer transition-colors"
+            className="w-full justify-between text-muted-foreground hover:text-foreground hover:bg-accent/40 rounded-md h-7 px-1.5 cursor-pointer transition-all duration-200"
           >
             <span className="flex items-center gap-1.5 text-[11px] font-medium">
               <Link2 className="size-3" />
@@ -108,16 +108,16 @@ export function SavePage({ onSignedOut }: SavePageProps) {
               placeholder="https://example.com/article"
               value={overrideUrl}
               onChange={(e) => setOverrideUrl(e.target.value)}
-              className="h-8 rounded-md text-[11px]"
+              className="h-8 rounded-md text-[11px] border-border/80 focus-visible:ring-1 focus-visible:ring-primary/30 focus-visible:border-primary transition-all duration-200"
             />
           </div>
           <Button
             variant="secondary"
-            className="w-full h-8 rounded-md text-[11px] font-medium gap-1 cursor-pointer transition-colors"
+            className="w-full h-8 rounded-md text-[11px] font-medium gap-1 cursor-pointer transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50"
             onClick={handleSaveUrl}
             disabled={savingUrl || !overrideUrl.trim()}
           >
-            {savingUrl ? <Spinner className="size-3" /> : <Save className="size-3" />}
+            {savingUrl ? <Spinner className="size-3 animate-spin" /> : <Save className="size-3" />}
             Save URL
           </Button>
         </CollapsibleContent>

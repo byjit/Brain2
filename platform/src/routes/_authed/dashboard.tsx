@@ -9,8 +9,10 @@ import {
 	Plus,
 	ShieldCheck,
 	Trash2,
+	Wrench,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
@@ -61,10 +63,20 @@ interface UserProfile {
 	created_at: string;
 }
 
+interface FailedEntry {
+	id: string;
+	url: string | null;
+	title: string | null;
+	note: string | null;
+	error_message: string | null;
+	updated_at: string;
+}
+
 function DashboardPage() {
 	const navigate = useNavigate();
 	const [user, setUser] = useState<UserProfile | null>(null);
 	const [tokens, setTokens] = useState<TokenInfo[]>([]);
+	const [failedEntries, setFailedEntries] = useState<FailedEntry[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [newTokenName, setNewTokenName] = useState("");
 	const [creating, setCreating] = useState(false);
@@ -101,12 +113,51 @@ function DashboardPage() {
 				const tokensData = await tokensRes.json();
 				setTokens(tokensData.filter((t: TokenInfo) => !t.revoked));
 			}
+
+			// Fetch Failed Entries
+			const failedRes = await fetch(
+				`${env.VITE_BRAIN2_API_URL}/entries/failed`,
+				{
+					credentials: "include",
+				}
+			);
+			if (failedRes.ok) {
+				const failedData = await failedRes.json();
+				setFailedEntries(failedData.entries || []);
+			}
 		} catch (err) {
 			console.error("Failed to load dashboard data", err);
 			toast.error("Failed to authenticate session. Please sign in again.");
 			navigate({ to: "/login" });
 		} finally {
 			setLoading(false);
+		}
+	};
+
+	// Handle repair entry
+	const handleRepairEntry = async (entryId: string, noteValue: string) => {
+		const value = noteValue.trim();
+		if (!value) return;
+
+		try {
+			const res = await fetch(`${env.VITE_BRAIN2_API_URL}/entries/${entryId}`, {
+				method: "PATCH",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ note: value }),
+				credentials: "include",
+			});
+
+			if (!res.ok) {
+				throw new Error("Failed to repair entry");
+			}
+
+			toast.success("Entry repaired successfully!");
+			setFailedEntries((prev) => prev.filter((e) => e.id !== entryId));
+		} catch (err) {
+			console.error("Failed to repair entry", err);
+			toast.error("Failed to repair entry. Please try again.");
 		}
 	};
 
@@ -255,8 +306,34 @@ function DashboardPage() {
 					</p>
 				</div>
 
+				{/* Needs Attention Card */}
+				{failedEntries.length > 0 && (
+					<Card className="border-destructive/15 bg-destructive/5/80 dark:bg-destructive/5/30 rounded-2xl shadow-sm hover:shadow-md transition-all duration-300">
+						<CardHeader className="pb-3">
+							<CardTitle className="text-lg font-semibold flex items-center gap-2 text-destructive">
+								<AlertTriangle className="h-5 w-5 animate-pulse" />
+								Needs Attention ({failedEntries.length})
+							</CardTitle>
+							<CardDescription className="text-xs mt-1.5 text-muted-foreground font-medium leading-relaxed">
+								Some captures could not be processed automatically. Please add a summary note to manually index them.
+							</CardDescription>
+						</CardHeader>
+						<CardContent className="space-y-4 pt-0">
+							<div className="space-y-4">
+								{failedEntries.map((entry) => (
+									<FailedEntryItem
+										key={entry.id}
+										entry={entry}
+										onRepair={handleRepairEntry}
+									/>
+								))}
+							</div>
+						</CardContent>
+					</Card>
+				)}
+
 				{/* Access Token Card */}
-				<Card>
+				<Card className="border border-border/80 rounded-2xl shadow-sm hover:shadow-md transition-all duration-300">
 					<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
 						<div>
 							<CardTitle className="text-lg font-semibold flex items-center gap-2">
@@ -268,7 +345,7 @@ function DashboardPage() {
 								your memory.
 							</CardDescription>
 						</div>
-						<Button onClick={() => setIsCreateOpen(true)} size="sm">
+						<Button onClick={() => setIsCreateOpen(true)} size="sm" className="transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] cursor-pointer rounded-xl px-4 py-2">
 							<Plus className="h-4 w-4 mr-1.5" />
 							Generate token
 						</Button>
@@ -285,29 +362,29 @@ function DashboardPage() {
 								</p>
 							</div>
 						) : (
-							<div className="border border-border rounded-xl overflow-hidden">
+							<div className="border border-border/60 rounded-xl overflow-hidden shadow-2xs bg-card/30">
 								<Table>
 									<TableHeader>
 										<TableRow>
-											<TableHead className="text-xs">Name</TableHead>
-											<TableHead className="text-xs">Token Prefix</TableHead>
-											<TableHead className="text-xs">Created</TableHead>
-											<TableHead className="text-xs">Last Used</TableHead>
-											<TableHead className="text-xs text-right pr-6">
+											<TableHead className="text-xs font-semibold text-muted-foreground/80 uppercase tracking-wider py-4 pl-6">Name</TableHead>
+											<TableHead className="text-xs font-semibold text-muted-foreground/80 uppercase tracking-wider py-4">Token Prefix</TableHead>
+											<TableHead className="text-xs font-semibold text-muted-foreground/80 uppercase tracking-wider py-4">Created</TableHead>
+											<TableHead className="text-xs font-semibold text-muted-foreground/80 uppercase tracking-wider py-4">Last Used</TableHead>
+											<TableHead className="text-xs font-semibold text-muted-foreground/80 uppercase tracking-wider py-4 text-right pr-6">
 												Action
 											</TableHead>
 										</TableRow>
 									</TableHeader>
 									<TableBody>
 										{tokens.map((token) => (
-											<TableRow key={token.id}>
-												<TableCell className="font-medium py-3.5">
+											<TableRow key={token.id} className="transition-colors hover:bg-muted/40">
+												<TableCell className="font-semibold py-4 pl-6 text-foreground/90 text-sm">
 													{token.name || "Unnamed Token"}
 												</TableCell>
-												<TableCell className="font-mono text-xs text-muted-foreground">
-													<code>{token.prefix}…</code>
+												<TableCell className="font-mono text-xs text-muted-foreground/90 py-4">
+													<code className="bg-muted px-2 py-0.5 rounded border border-border/40 text-muted-foreground">{token.prefix}…</code>
 												</TableCell>
-												<TableCell className="text-muted-foreground text-xs">
+												<TableCell className="text-muted-foreground/85 text-xs py-4 font-medium">
 													{new Date(token.created_at).toLocaleDateString(
 														undefined,
 														{
@@ -317,7 +394,7 @@ function DashboardPage() {
 														}
 													)}
 												</TableCell>
-												<TableCell className="text-muted-foreground text-xs">
+												<TableCell className="text-muted-foreground/85 text-xs py-4 font-medium">
 													{token.last_used_at ? (
 														new Date(token.last_used_at).toLocaleDateString(
 															undefined,
@@ -341,6 +418,7 @@ function DashboardPage() {
 														size="icon-xs"
 														title="Revoke Token"
 														variant="destructive"
+														className="transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
 													>
 														<Trash2 className="h-4 w-4" />
 													</Button>
@@ -490,6 +568,83 @@ function DashboardPage() {
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
+		</div>
+	);
+}
+
+interface FailedEntryItemProps {
+	entry: FailedEntry;
+	onRepair: (id: string, note: string) => Promise<void>;
+}
+
+function FailedEntryItem({ entry, onRepair }: FailedEntryItemProps) {
+	const [note, setNote] = useState(entry.note ?? "");
+	const [repairing, setRepairing] = useState(false);
+
+	const heading = entry.title || entry.url || "Untitled capture";
+	const canRepair = note.trim().length > 0;
+
+	const handleRepair = async () => {
+		if (!canRepair || repairing) return;
+		setRepairing(true);
+		try {
+			await onRepair(entry.id, note);
+		} finally {
+			setRepairing(false);
+		}
+	};
+
+	return (
+		<div className="border border-border/80 dark:border-border/40 bg-card rounded-2xl p-5 space-y-4 shadow-sm hover:shadow-md transition-all duration-250 hover:border-destructive/20">
+			<div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+				<div className="space-y-1.5 flex-1 min-w-0">
+					<h4 className="font-bold text-sm text-foreground/90 truncate" title={heading}>
+						{heading}
+					</h4>
+					{entry.url && (
+						<p className="truncate" title={entry.url}>
+							<a
+								href={entry.url}
+								target="_blank"
+								rel="noopener noreferrer"
+								className="text-muted-foreground hover:text-foreground font-mono text-[11px] select-all transition-colors duration-200"
+							>
+								{entry.url}
+							</a>
+						</p>
+					)}
+					{entry.error_message && (
+						<div className="text-xs text-destructive bg-destructive/5 dark:bg-destructive/10/30 border border-destructive/15 rounded-xl p-3.5 font-medium leading-relaxed shadow-3xs">
+							{entry.error_message}
+						</div>
+					)}
+				</div>
+			</div>
+
+			<div className="flex flex-col gap-3.5">
+				<Textarea
+					aria-label={`Note for ${heading}`}
+					placeholder="Add summary note to manually index this entry..."
+					value={note}
+					onChange={(e) => setNote(e.target.value)}
+					className="bg-muted/30 dark:bg-muted/10/40 border border-border/80 focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary/20 text-sm min-h-[90px] rounded-xl px-4 py-3 transition-all duration-200 resize-y"
+				/>
+				<div className="flex justify-end">
+					<Button
+						onClick={handleRepair}
+						disabled={!canRepair || repairing}
+						variant="destructive"
+						className="gap-2 w-full md:w-auto px-5 py-2 rounded-xl font-medium text-xs shadow-xs transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+					>
+						{repairing ? (
+							<Loader2 className="h-4 w-4 animate-spin" />
+						) : (
+							<Wrench className="h-4 w-4" />
+						)}
+						Repair Entry
+					</Button>
+				</div>
+			</div>
 		</div>
 	);
 }

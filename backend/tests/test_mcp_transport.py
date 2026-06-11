@@ -37,9 +37,12 @@ async def test_tools_are_registered_with_annotations():
     mcp = build_mcp_server()
     listed = await mcp.list_tools()
     by_name = {t.name: t for t in listed}
-    # All four spec §10 tools are registered.
-    assert set(by_name) == {"save", "retrieve", "delete", "get_tags"}
+    # The spec §10 tools plus the `list` browse/filter tool are registered.
+    assert set(by_name) == {"save", "retrieve", "delete", "get_tags", "list"}
     assert by_name["retrieve"].annotations.readOnlyHint is True
+    # list is a read-only, non-destructive browse complement to retrieve.
+    assert by_name["list"].annotations.readOnlyHint is True
+    assert by_name["list"].annotations.destructiveHint is False
     assert by_name["save"].annotations.destructiveHint is True
     # delete: destructive but idempotent and not read-only (spec M6).
     assert by_name["delete"].annotations.readOnlyHint is False

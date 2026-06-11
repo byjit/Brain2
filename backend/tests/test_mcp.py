@@ -9,7 +9,7 @@ Tests call the tool implementations directly with an explicit user context, prov
 import pytest
 
 from brain2.mcp import auth
-from brain2.mcp.tools import retrieve_tool, save_tool
+from brain2.mcp.tools import list_tool, retrieve_tool, save_tool
 
 
 @pytest.fixture(autouse=True)
@@ -131,6 +131,38 @@ def test_save_with_agent_tags_canonicalizes_and_persists():
         assert edges == {"rust", "async"}  # normalized to lowercase
         for tag in ("rust", "async"):
             assert conn.execute("SELECT count FROM tags WHERE name=?", (tag,)).fetchone()[0] == 1
+
+
+def test_list_returns_active_entries_for_resolved_user():
+    """list routes to the resolved user's DB and returns active entries (no query)."""
+    from brain2.config import get_settings
+    from brain2.db.connection import open_user_db
+
+    user_id = get_settings().dev_user_id
+    with auth.user_scope(user_id):
+        saved = save_tool(type="note", note="a listable memory")
+        # save lands rows as 'pending'; the worker activates them. Force active here so
+        # the deterministic list surfaces it without running the async pipeline.
+        with open_user_db(user_id, data_dir=get_settings().data_dir) as conn:
+            conn.execute("UPDATE entries SET status='active' WHERE id=?", (saved["id"],))
+            conn.commit()
+
+        rows = list_tool()
+        assert any(r["id"] == saved["id"] for r in rows)
+        assert all("score" not in r for r in rows)  # deterministic list carries no score
+
+
+def test_list_outside_user_scope_raises():
+    with pytest.raises(PermissionError):
+        list_tool()
+
+
+def test_list_negative_limit_rejected_with_clear_error():
+    from brain2.config import get_settings
+
+    with auth.user_scope(get_settings().dev_user_id):
+        with pytest.raises(ValueError, match="limit must be >= 0"):
+            list_tool(limit=-1)
 
 
 def test_retrieve_outside_user_scope_raises():

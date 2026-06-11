@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS entries (
 -- url=NULL notes never collide with each other (spec §7.1/§10).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_url ON entries(url) WHERE url IS NOT NULL;
 
+-- Supports the `list` tool (spec §10): newest-first ordering + saved_at range scans.
+-- Leads with status because list returns only active entries, then saved_at for the
+-- ORDER BY / range bounds.
+CREATE INDEX IF NOT EXISTS idx_entries_status_saved_at ON entries(status, saved_at DESC);
+
 -- Entry <-> tag edges (the bipartite graph)
 CREATE TABLE IF NOT EXISTS entry_tags (
   entry_id TEXT REFERENCES entries(id) ON DELETE CASCADE,

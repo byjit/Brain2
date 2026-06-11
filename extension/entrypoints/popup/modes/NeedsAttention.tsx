@@ -61,7 +61,7 @@ export function NeedsAttention({ count }: NeedsAttentionProps) {
       </h2>
       {loading ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-          <Spinner className="size-3.5" />
+          <Spinner className="size-3.5 animate-spin" />
           Loading issues…
         </div>
       ) : (
@@ -117,7 +117,7 @@ function RepairRow({
   }
 
   return (
-    <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 space-y-2.5 shadow-2xs">
+    <div className="rounded-xl border border-destructive/15 bg-destructive/5/80 p-3 space-y-2.5 shadow-sm transition-all duration-200 hover:border-destructive/35 hover:shadow-md">
       <div className="space-y-1">
         <p className="truncate text-xs font-semibold text-foreground" title={heading}>
           {heading}
@@ -137,15 +137,15 @@ function RepairRow({
         value={note}
         onChange={(e) => setNote(e.target.value)}
         rows={2}
-        className="rounded-lg bg-background text-xs resize-none"
+        className="rounded-lg bg-background text-xs resize-none border-border/80 focus-visible:ring-1 focus-visible:ring-destructive/30 focus-visible:border-destructive transition-all duration-200"
       />
       <Button
         size="sm"
-        className="w-full h-8 bg-destructive text-destructive-foreground hover:bg-destructive/95 cursor-pointer rounded-lg text-xs font-medium gap-1.5"
+        className="w-full h-8 bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer rounded-lg text-xs font-medium gap-1.5 transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50"
         onClick={handleRepair}
         disabled={!canRepair || repairing}
       >
-        {repairing ? <Spinner className="size-3.5" /> : <Wrench className="size-3.5" />}
+        {repairing ? <Spinner className="size-3.5 animate-spin" /> : <Wrench className="size-3.5" />}
         Repair Entry
       </Button>
     </div>

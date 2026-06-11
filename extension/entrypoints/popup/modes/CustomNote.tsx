@@ -49,7 +49,7 @@ export function CustomNote({ onSignedOut }: CustomNoteProps) {
 
   return (
     <div className="space-y-2">
-      <div className="space-y-1">
+      <div className="space-y-1.5">
         <Label htmlFor="custom-note" className="flex items-center gap-1 text-[11px] font-semibold text-foreground/80">
           <NotebookPen className="size-3 text-primary" />
           Quick Note
@@ -60,15 +60,15 @@ export function CustomNote({ onSignedOut }: CustomNoteProps) {
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={3}
-          className="rounded-lg border-border/80 focus-visible:ring-1 text-[11px] resize-none leading-relaxed"
+          className="rounded-lg border-border/80 focus-visible:ring-1 focus-visible:ring-primary/30 focus-visible:border-primary text-[11px] resize-none leading-relaxed transition-all duration-200"
         />
       </div>
       <Button
-        className="w-full h-8 bg-primary text-primary-foreground hover:bg-primary/95 cursor-pointer rounded-lg font-medium text-[11px] gap-1 transition-colors"
+        className="w-full h-8 bg-primary text-primary-foreground hover:bg-primary/95 cursor-pointer rounded-lg font-medium text-[11px] gap-1 transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50"
         onClick={handleSave}
         disabled={!canSave || saving}
       >
-        {saving ? <Spinner className="size-3" /> : <Send className="size-3" />}
+        {saving ? <Spinner className="size-3 animate-spin" /> : <Send className="size-3" />}
         Save Note
       </Button>
     </div>
