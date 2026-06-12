@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, Github } from "lucide-react";
+import { ArrowRight, Download, DownloadCloud, Github } from "lucide-react";
 import { LogoIcon } from "@/components/Logo";
 import { APP_NAME } from "@/lib/constant";
 
@@ -33,18 +33,15 @@ export const Hero = () => {
 					className="inline-flex items-center whitespace-nowrap rounded-full font-medium bg-foreground text-background hover:opacity-85 transition-opacity gap-2.5 px-5 py-2.5 text-[15px]"
 					to="/login"
 				>
-					<ArrowRight className="h-4 w-4" />
+					<DownloadCloud className="h-4 w-4" />
 					Get Chrome Extension
 				</Link>
-				<a
+				<Link
 					className="inline-flex items-center whitespace-nowrap gap-2 rounded-full border border-border px-5 py-2.5 text-[15px] font-medium text-foreground hover:bg-muted/30 transition-colors"
-					href="https://github.com/byjit/Brain2"
-					rel="noopener noreferrer"
-					target="_blank"
+					to="/login"
 				>
-					<Github className="h-4 w-4" />
-					View on GitHub
-				</a>
+					Join Platform
+				</Link>
 			</div>
 
 			{/* Features List */}

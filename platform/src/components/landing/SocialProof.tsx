@@ -1,43 +1,12 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, Github } from "lucide-react";
 
-const testimonials = [
-	{
-		quote:
-			"A memory tool actually built for coding agents. Save context once via Chrome, and query it instantly inside Claude Code or Cursor over MCP. Zero cognitive load to keep files organized.",
-		author: "Mitchell Hashimoto",
-		role: "Creator of Ghostty & Founder of HashiCorp",
-		gradient: "from-pink-500 to-rose-500",
-	},
-	{
-		quote:
-			"My Cursor and Claude Code sessions are finally context-aware. I save everything interesting with the extension and my agent just pulls it when answering. Game-changing.",
-		author: "Nick Schrock",
-		role: "Creator of Dagster, GraphQL co-creator",
-		gradient: "from-blue-500 to-cyan-500",
-	},
-	{
-		quote:
-			"The automatic tagging and summarization in the background are super clean. It does all the ingestion and RAG-grounding for you without cluttering the tag vocabulary.",
-		author: "Edward Grefenstette",
-		role: "Director of Research at Google DeepMind",
-		gradient: "from-purple-500 to-indigo-500",
-	},
-	{
-		quote:
-			"I love that each user gets their own isolated SQLite DB file with FTS5 and vector search. It gives me complete control over my data.",
-		author: "Peter Steinberger",
-		role: "OpenClaw Creator, Founder of PSPDFKit",
-		gradient: "from-amber-500 to-orange-500",
-	},
-	{
-		quote:
-			"Being able to have my agent write back to my memory store using the save tool makes the loop complete. Brain2 is now my unified developer second brain.",
-		author: "Joe Riddle",
-		role: "Frontend Architect",
-		gradient: "from-emerald-500 to-teal-500",
-	},
-];
+const testimonials: {
+	quote: string;
+	author: string;
+	role: string;
+	gradient: string;
+}[] = [];
 
 export const SocialProof = () => {
 	return (
@@ -57,7 +26,7 @@ export const SocialProof = () => {
 							<span className="inline-flex items-center gap-1.5 text-muted-foreground whitespace-nowrap">
 								—
 								<span
-									className={`w-4 h-4 rounded-full bg-gradient-to-br ${t.gradient} flex items-center justify-center text-[8px] font-bold text-white uppercase select-none`}
+									className={`w-4 h-4 rounded-full bg-linear-to-br ${t.gradient} flex items-center justify-center text-[8px] font-bold text-white uppercase select-none`}
 								>
 									{t.author.charAt(0)}
 								</span>

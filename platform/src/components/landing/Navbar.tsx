@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Menu, Moon, Sun, X } from "lucide-react";
+import { Github, Menu, Moon, Sun, X } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useState } from "react";
 
@@ -11,7 +11,6 @@ export const Navbar = () => {
 		{ name: "Home", to: "/" },
 		{ name: "Blog", to: "/blogs" },
 		{ name: "Changelog", to: "/changelog" },
-		{ name: "GitHub", href: "https://github.com/byjit/Brain2" },
 	];
 
 	const toggleTheme = () => {
@@ -42,7 +41,7 @@ export const Navbar = () => {
 							>
 								{item.name}
 							</Link>
-						)
+						),
 					)}
 				</nav>
 
@@ -56,6 +55,14 @@ export const Navbar = () => {
 							Get Extension
 						</Link>
 					</div>
+					<a
+						href="https://github.com/byjit/Brain2"
+						className="rounded-full p-1.5 bg-black text-white"
+						rel="noopener noreferrer"
+						target="_blank"
+					>
+						<Github className="h-4 w-4" />
+					</a>
 
 					{/* Theme Switcher Button */}
 					<button
@@ -105,7 +112,7 @@ export const Navbar = () => {
 								>
 									{item.name}
 								</Link>
-							)
+							),
 						)}
 						<div className="pt-2">
 							<Link
