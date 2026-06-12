@@ -181,6 +181,7 @@ def test_oauth_pkce_happy_path(app_client):
         "/oauth/token",
         data={
             "grant_type": "authorization_code",
+            "client_id": "ext",
             "code": code,
             "redirect_uri": _REDIRECT,
             "code_verifier": verifier,
@@ -265,6 +266,7 @@ def test_oauth_wrong_verifier_rejected(app_client):
         "/oauth/token",
         data={
             "grant_type": "authorization_code",
+            "client_id": "ext",
             "code": code,
             "redirect_uri": _REDIRECT,
             "code_verifier": "wrong" * 13,
@@ -281,6 +283,7 @@ def test_oauth_reused_code_rejected(app_client):
         "/oauth/token",
         data={
             "grant_type": "authorization_code",
+            "client_id": "ext",
             "code": code,
             "redirect_uri": _REDIRECT,
             "code_verifier": verifier,
@@ -291,6 +294,7 @@ def test_oauth_reused_code_rejected(app_client):
         "/oauth/token",
         data={
             "grant_type": "authorization_code",
+            "client_id": "ext",
             "code": code,
             "redirect_uri": _REDIRECT,
             "code_verifier": verifier,
@@ -308,6 +312,7 @@ def test_oauth_token_is_valid_bearer(app_client):
         "/oauth/token",
         data={
             "grant_type": "authorization_code",
+            "client_id": "ext",
             "code": code,
             "redirect_uri": _REDIRECT,
             "code_verifier": verifier,

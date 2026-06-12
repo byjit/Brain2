@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { NotebookPen, Send } from "lucide-react";
+import { Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Spinner } from "@/components/ui/spinner";
 import { saveNoteMsg } from "@/services/capture/messages";
@@ -11,13 +10,14 @@ import { isSignedOutError } from "../lib/is-signed-out";
 interface CustomNoteProps {
   /** Routes the popup back to the sign-in view when a save reveals no token. */
   onSignedOut: () => void;
+  /** Callback to close the note editor dialog. */
+  onClose: () => void;
 }
 
 /**
- * Free-form note capture. Save is disabled for empty/whitespace input.
- * Fire-and-forget: toast on success, then close.
+ * Free-form note capture content component designed to be displayed inside a modal Dialog.
  */
-export function CustomNote({ onSignedOut }: CustomNoteProps) {
+export function CustomNote({ onSignedOut, onClose }: CustomNoteProps) {
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -48,29 +48,36 @@ export function CustomNote({ onSignedOut }: CustomNoteProps) {
   }
 
   return (
-    <div className="space-y-2">
-      <div className="space-y-1.5">
-        <Label htmlFor="custom-note" className="flex items-center gap-1 text-[11px] font-semibold text-foreground/80">
-          <NotebookPen className="size-3 text-primary" />
-          Quick Note
-        </Label>
-        <Textarea
-          id="custom-note"
-          placeholder="Jot down notes, code snippets, or thoughts to save to your memory..."
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={3}
-          className="rounded-lg border-border/80 focus-visible:ring-1 focus-visible:ring-primary/30 focus-visible:border-primary text-[11px] resize-none leading-relaxed transition-all duration-200"
-        />
+    <div className="space-y-3">
+      <Textarea
+        id="custom-note"
+        placeholder="Jot down notes, code snippets, or thoughts..."
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={4}
+        autoFocus
+        className="w-full rounded-xl border border-border bg-card p-3 text-xs leading-relaxed focus-visible:ring-1 focus-visible:ring-primary/30 focus-visible:border-primary resize-none transition-all duration-200"
+      />
+      <div className="flex gap-2">
+        <Button
+          variant="outline"
+          onClick={onClose}
+          disabled={saving}
+          className="flex-1 h-9 rounded-xl text-xs font-semibold border-border/80 hover:bg-accent cursor-pointer transition-all duration-200 active:scale-98"
+        >
+          Cancel
+        </Button>
+        <Button
+          onClick={handleSave}
+          disabled={!canSave || saving}
+          className="flex-1 h-9 bg-primary text-primary-foreground hover:bg-primary/95 cursor-pointer rounded-xl font-semibold text-xs gap-1.5 transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50"
+        >
+          {saving ? <Spinner className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+          Save Note
+        </Button>
       </div>
-      <Button
-        className="w-full h-8 bg-primary text-primary-foreground hover:bg-primary/95 cursor-pointer rounded-lg font-medium text-[11px] gap-1 transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50"
-        onClick={handleSave}
-        disabled={!canSave || saving}
-      >
-        {saving ? <Spinner className="size-3 animate-spin" /> : <Send className="size-3" />}
-        Save Note
-      </Button>
     </div>
   );
 }
+
+

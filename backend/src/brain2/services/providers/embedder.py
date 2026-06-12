@@ -85,7 +85,7 @@ def l2_normalize(vec: list[float]) -> list[float]:
     """Return ``vec`` scaled to unit length (L2 norm 1), or unchanged if it is the zero
     vector.
 
-    gemini-embedding-001 only returns unit-normalized vectors at its native 3072 dims;
+    gemini-embedding-2 only returns unit-normalized vectors at its native dims;
     at a reduced ``output_dimensionality`` (768) the result is NOT re-normalized, so its
     magnitude varies. Re-normalizing makes the entries_vec L2 KNN monotonic with cosine,
     so retrieval ranks by semantic direction rather than magnitude (spec §11). Guards the

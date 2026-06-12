@@ -58,6 +58,24 @@ def test_worker_sets_active_and_writes_note_source_body(conn):
     assert fetcher.calls == ["https://x.test/a"]  # page body re-fetched, not stored
 
 
+def test_page_type_uses_stored_content_and_discards_it_on_activation(conn):
+    # If the page entry already has client-scraped content in the DB,
+    # the worker uses it directly without calling the fetcher,
+    # and then clears it from the DB once active.
+    _insert(conn, id="e_scraped", type="page", url="https://x.test/scraped", content="client scraped text body")
+    fetcher = FakePageFetcher(raises=Exception("Should not fetch page from network"))
+    summarizer = FakeSummarizer()
+
+    process_entry(conn, "e_scraped", fetcher=fetcher, summarizer=summarizer)
+
+    row = _row(conn, "e_scraped")
+    assert row["status"] == "active"
+    assert row["note_source"] == "body"
+    assert row["note"] == "Summary: client scraped text body"
+    assert row["content"] is None
+    assert fetcher.calls == []
+
+
 def test_worker_og_fallback(conn):
     _insert(conn, id="e2", type="page", url="https://x.test/b")
     fetcher = FakePageFetcher(default=PageContent(body_text=None, og_description="teaser copy"))

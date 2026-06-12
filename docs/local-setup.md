@@ -62,6 +62,7 @@ JWT_SECRET=dev-insecure-secret-change-me        # any value locally; MUST be str
 COOKIE_SECURE=false                              # allow the session cookie over http://localhost
 DASHBOARD_URL=http://localhost:3000              # MUST match the platform dev port (see note)
 ACCESS_TOKEN_TTL=3600                            # optional; lower temporarily to test silent re-auth
+REFRESH_TOKEN_TTL=2592000                        # optional; OAuth refresh-token TTL (rotated on use)
 
 # Exact-match allowlist of OAuth redirect URIs (comma-separated). Add the extension's
 # redirect URL here once you have it (see §5). The dashboard login does not need one.
@@ -101,9 +102,14 @@ REST surface (all entry endpoints require a `Bearer` credential):
 - `PATCH /entries/{id}` — repair
 - `GET  /auth/login` → Google → `GET /api/auth/callback/google` (sets the dashboard session cookie)
 - `GET  /auth/me`, `POST /auth/logout`
-- `GET  /oauth/authorize`, `POST /oauth/token` — OAuth 2.1 + PKCE (web/extension)
+- `GET  /oauth/authorize`, `POST /oauth/token` — OAuth 2.1 + PKCE (web/extension);
+  the token endpoint supports `authorization_code` **and** `refresh_token` grants and
+  returns a rotating refresh token alongside the 1h access token
+- `POST /oauth/register` — Dynamic Client Registration (RFC 7591) for MCP clients that
+  self-register (e.g. Claude Web custom connectors)
 - `POST/GET/DELETE /settings/tokens` — Personal Access Tokens (API keys)
-- MCP tools at `http://localhost:8000/connect/mcp` (streamable HTTP)
+- MCP tools at `http://localhost:8000/connect/mcp` (streamable HTTP); missing **or**
+  invalid/expired tokens are challenged with `401` + `WWW-Authenticate`
 
 ---
 
@@ -177,8 +183,11 @@ browser.identity.getRedirectURL()
 ```
 
 Add that exact string to the backend's `OAUTH_REDIRECT_URIS` allowlist (it is matched
-exactly — no substrings). `client_id` is **not** validated by the backend today, so the
-configured `VITE_BRAIN2_OAUTH_CLIENT_ID` value only needs to be present, not registered.
+exactly — no substrings). `client_id` validation is two-tier: a client registered via
+`POST /oauth/register` (RFC 7591) is validated against **its own** registered redirect
+URIs; any other `client_id` (like the extension's `VITE_BRAIN2_OAUTH_CLIENT_ID`) falls
+back to the static `OAUTH_REDIRECT_URIS` allowlist, so it only needs to be present, not
+registered.
 
 > [!TIP]
 > **Interactive Sign-In Redirection:**
@@ -240,38 +249,64 @@ sqlite3 data/users/<user_id>.db "select id,type,status,note from entries order b
 ```
 
 3. Ask the agent something you saved (e.g. *"what was that Rust HTTP library I saved?"*).
-   The four tools are `save`, `retrieve`, `delete`, `get_tags`.
+   The five tools are `save`, `retrieve`, `list`, `delete`, `get_tags`.
 
 ### 7b. Web Clients (Claude Web / ChatGPT Actions)
-Our server implements the MCP OAuth 2.1 authorization discovery specification (RFC 9728 and RFC 8414). Because web-based clients like Claude Web (`claude.ai`) run in the cloud, they cannot connect directly to `localhost`. You must expose your local server to the public internet using a secure tunnel:
+Our server implements the MCP OAuth 2.1 authorization stack: discovery (RFC 9728 Protected
+Resource Metadata — root **and** path-suffix variants — and RFC 8414 AS metadata), Dynamic
+Client Registration (RFC 7591 at `POST /oauth/register`), PKCE S256, and a rotating
+`refresh_token` grant so connectors outlive the 1h access-token TTL without re-prompting.
+Because web-based clients like Claude Web (`claude.ai`) run in the cloud, they cannot
+connect directly to `localhost`. You must expose your local server to the public internet
+using a secure tunnel:
 
 1. **Expose localhost via a tunnel:**
    * **Using Ngrok:** Run `ngrok http 8000`. This will output a public URL like `https://a1b2-34-56-78-90.ngrok-free.app`.
    * **Using Cloudflare Tunnel:** Run `cloudflared tunnel --url http://localhost:8000`. This will output a public URL like `https://some-subdomain.trycloudflare.com`.
-2. **Add the client's callback URL to your root `.env`:**
-   Add the client's callback (e.g., `https://claude.ai/api/mcp/auth_callback` or `https://chat.openai.com/aip/g-.../oauth/callback`) to the `OAUTH_REDIRECT_URIS` comma-separated list.
-3. **Register the connector:**
+2. **Register the connector:**
    In your web client's connector settings, add your public tunnel URL with the MCP path (e.g., `https://<your-tunnel-subdomain>.ngrok-free.app/connect/mcp`).
-4. **Authorize:**
-   The client will automatically discover our resource metadata (`/.well-known/oauth-protected-resource`) and authorization server metadata (`/.well-known/oauth-authorization-server`), triggering a browser OAuth consent flow. Authenticate via Google/Brain2 credentials to connect.
+3. **Authorize:**
+   The client discovers the metadata endpoints from the `401` challenge, **registers itself**
+   via `POST /oauth/register` (no manual `OAUTH_REDIRECT_URIS` edit needed for clients that
+   support DCR), and launches the browser flow: sign in with Google, then click **Allow**
+   on Brain2's consent screen (shown for every dynamically registered client — open
+   registration means codes are never issued to them silently). Clients **without** DCR
+   support still work the old way: add their callback URL
+   (e.g. `https://chat.openai.com/aip/g-.../oauth/callback`) to `OAUTH_REDIRECT_URIS`.
 
 ### 7c. Interactive Tool Testing (MCP Inspector)
-The official `@modelcontextprotocol/inspector` is a browser-based developer GUI for testing and debugging MCP tools. It's the ideal way to verify tool inputs, outputs, and schemas without needing a full AI client:
+The official `@modelcontextprotocol/inspector` is a browser-based developer GUI for testing and debugging MCP tools. It's the ideal way to verify tool inputs, outputs, and schemas without needing a full AI client. It can authenticate either way Brain2 supports — an API key header (quickest) or the full OAuth flow (tests exactly what Claude Web does):
 
-1. **Create a Personal Access Token:** Sign in on the dashboard (`http://localhost:3000`) and generate a token (format `br2_live_…`).
-2. **Launch the Inspector:** In a separate terminal, run:
+1. **Launch the Inspector:** In a separate terminal, run:
    ```bash
    npx @modelcontextprotocol/inspector
    ```
+   It opens `http://localhost:6274` in your browser (the proxy listens on `:6277`).
+
+**Option A — API key (quickest):**
+
+2. **Create a Personal Access Token:** Sign in on the dashboard (`http://localhost:3000`) and generate a token (format `br2_live_…`).
 3. **Connect in the Browser:**
-   * Open `http://localhost:6274` in your browser.
-   * Under **Transport**, select **SSE** (as our backend uses the streamable-HTTP transport).
+   * Under **Transport Type**, select **Streamable HTTP**.
    * In the URL field, enter: `http://localhost:8000/connect/mcp`
-   * Add a custom header:
+   * Under **Authentication**, add a custom header:
      * Key: `Authorization`
      * Value: `Bearer br2_live_...` (replace with your generated token)
    * Click **Connect**.
-4. **Verify Tools:** You will see the `save`, `retrieve`, `delete`, and `get_tags` tools listed. You can fill out their arguments in the UI and execute them to verify that the backend database changes correctly.
+
+**Option B — OAuth 2.1 (exercises discovery + DCR + refresh):**
+
+2. **Connect in the Browser:**
+   * Under **Transport Type**, select **Streamable HTTP** and enter `http://localhost:8000/connect/mcp`.
+   * Do **not** set an Authorization header — click **Connect** (or use the **Open Auth Settings** / **Quick OAuth Flow** button).
+   * The Inspector receives the `401` challenge, discovers `/.well-known/oauth-protected-resource/connect/mcp` → `/.well-known/oauth-authorization-server`, registers itself at `POST /oauth/register`, and pops the browser flow: Google sign-in, then Brain2's **consent screen** (it's a DCR-registered client) — click **Allow**. Its callback (`http://localhost:6274/oauth/callback`) is accepted automatically because DCR allows `http` on loopback — no allowlist edit needed.
+   * After allowing, you land back in the Inspector with an access + refresh token pair.
+
+3. **Verify Tools:** You will see the `save`, `retrieve`, `list`, `delete`, and `get_tags` tools listed. You can fill out their arguments in the UI and execute them to verify that the backend database changes correctly.
+4. **Verify the 401 challenge (optional):** connect with a garbage header value
+   (`Bearer nope`) and confirm the connection fails immediately — the backend answers
+   `401` with `WWW-Authenticate: Bearer error="invalid_token", resource_metadata=…`
+   instead of accepting the session.
 
 > Clients that only speak stdio MCP need a remote→stdio bridge (a `@brain2/mcp-bridge` is
 > a designed-for v2 item; see `status.md`).

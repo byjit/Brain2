@@ -35,6 +35,8 @@ const corsBoundEntries = [
   "entrypoints/picker.content.ts",
   "entrypoints/picker/picker-overlay.ts",
   "entrypoints/picker/html-to-markdown.ts",
+  "entrypoints/note.content.ts",
+  "entrypoints/note/note-modal.ts",
 ];
 
 // Module specifiers that must never appear in a CORS-bound entry's imports.

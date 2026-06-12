@@ -104,7 +104,9 @@ def save_entry(
             raise  # not the URL-dedup conflict we expected; do not mask it
         return _update_existing(conn, raced_id, req, content, now, embedder=embedder)
 
-    index_entry(conn, entry_id, req.title, content)
+    # For page type, do not index the body content in FTS, since it is not permanently persisted.
+    fts_content = None if req.type == EntryType.PAGE else content
+    index_entry(conn, entry_id, req.title, fts_content)
     conn.commit()
     return SaveEntryResponse(id=entry_id, status=SaveStatus.SAVED)
 
@@ -144,6 +146,16 @@ def _update_existing(
     vector is re-indexed alongside FTS so both retrieval legs reflect the new note (spec
     §7.1 clear/replace invariant); otherwise the vector is left untouched.
     """
+    existing = conn.execute(
+        "select status from entries where id = ?", (existing_id,)
+    ).fetchone()
+    existing_status = existing["status"] if existing else "pending"
+
+    # For page type, if it's already active, do not overwrite the discarded content
+    # with the newly scraped text.
+    if req.type == EntryType.PAGE and existing_status == "active":
+        content = None
+
     conn.execute(
         """
         UPDATE entries
@@ -173,9 +185,11 @@ def _update_existing(
     # Re-index from the effective (post-COALESCE) row so the FTS index reflects
     # what is actually stored, not just the fields this request supplied.
     effective = conn.execute(
-        "select title, content, note from entries where id = ?", (existing_id,)
+        "select title, content, type, note from entries where id = ?", (existing_id,)
     ).fetchone()
-    index_entry(conn, existing_id, effective["title"], effective["content"])
+    # For page type, do not index the body content in FTS.
+    fts_content = None if effective["type"] == "page" else effective["content"]
+    index_entry(conn, existing_id, effective["title"], fts_content)
     # A note override changes the vectorized field, so re-embed in lockstep with FTS to
     # keep the two legs consistent (spec §7.1). Scoped to the override case so an
     # override-free re-save of an active entry does not blindly re-embed (spec §10).

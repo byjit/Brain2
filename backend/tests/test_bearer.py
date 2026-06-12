@@ -71,3 +71,9 @@ def test_revoked_api_key_rejected(conn):
     assert bearer.resolve_bearer(
         f"Bearer {created.api_key}", conn=conn, secret=_SECRET
     ) is None
+
+
+def test_jwt_bearer_rejected_if_user_not_in_db(conn):
+    token = jwt_service.issue_token("u_nonexistent", secret=_SECRET, ttl=60)
+    assert bearer.resolve_bearer(f"Bearer {token}", conn=conn, secret=_SECRET) is None
+

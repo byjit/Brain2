@@ -40,3 +40,16 @@ class CurrentUserResponse(BaseModel):
     user_id: str
     email: str | None
     created_at: str
+
+
+class RegisterClientRequest(BaseModel):
+    """RFC 7591 Dynamic Client Registration request (POST /oauth/register).
+
+    Only the fields Brain2 acts on are modeled; unknown metadata is ignored per the RFC.
+    ``token_endpoint_auth_method`` is accepted so we can REJECT anything but ``none`` —
+    Brain2 issues no client secrets (public clients + PKCE only).
+    """
+
+    redirect_uris: list[str] = Field(description="Exact redirect URIs for this client")
+    client_name: str | None = Field(default=None, max_length=200)
+    token_endpoint_auth_method: str | None = Field(default=None)

@@ -12,9 +12,9 @@ import {
 	Wrench,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { Logo } from "@/components/Logo";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -41,8 +41,8 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 import { env } from "@/env";
-import { ThemeSwitcher } from "@/components/theme-switcher";
 
 export const Route = createFileRoute("/_authed/dashboard")({
 	component: DashboardPage,
@@ -107,7 +107,7 @@ function DashboardPage() {
 				`${env.VITE_BRAIN2_API_URL}/settings/tokens`,
 				{
 					credentials: "include",
-				}
+				},
 			);
 			if (tokensRes.ok) {
 				const tokensData = await tokensRes.json();
@@ -119,7 +119,7 @@ function DashboardPage() {
 				`${env.VITE_BRAIN2_API_URL}/entries/failed`,
 				{
 					credentials: "include",
-				}
+				},
 			);
 			if (failedRes.ok) {
 				const failedData = await failedRes.json();
@@ -207,7 +207,7 @@ function DashboardPage() {
 	const handleRevokeToken = async (tokenId: string) => {
 		if (
 			!confirm(
-				"Are you sure you want to revoke this Personal Access Token? Any agents or CLI tools using this key will immediately lose access to your memory store."
+				"Are you sure you want to revoke this Personal Access Token? Any agents or CLI tools using this key will immediately lose access to your memory store.",
 			)
 		) {
 			return;
@@ -219,7 +219,7 @@ function DashboardPage() {
 				{
 					method: "DELETE",
 					credentials: "include",
-				}
+				},
 			);
 
 			if (!res.ok) {
@@ -308,22 +308,23 @@ function DashboardPage() {
 
 				{/* Needs Attention Card */}
 				{failedEntries.length > 0 && (
-					<Card className="border-destructive/15 bg-destructive/5/80 dark:bg-destructive/5/30 rounded-2xl shadow-sm hover:shadow-md transition-all duration-300">
+					<Card className="border-destructive/15 bg-destructive/5 dark:bg-destructive/10 rounded-2xl shadow-sm hover:shadow-md transition-all duration-300">
 						<CardHeader className="pb-3">
 							<CardTitle className="text-lg font-semibold flex items-center gap-2 text-destructive">
 								<AlertTriangle className="h-5 w-5 animate-pulse" />
 								Needs Attention ({failedEntries.length})
 							</CardTitle>
 							<CardDescription className="text-xs mt-1.5 text-muted-foreground font-medium leading-relaxed">
-								Some captures could not be processed automatically. Please add a summary note to manually index them.
+								Some captures could not be processed automatically. Please add a
+								summary note to manually index them.
 							</CardDescription>
 						</CardHeader>
 						<CardContent className="space-y-4 pt-0">
 							<div className="space-y-4">
 								{failedEntries.map((entry) => (
 									<FailedEntryItem
-										key={entry.id}
 										entry={entry}
+										key={entry.id}
 										onRepair={handleRepairEntry}
 									/>
 								))}
@@ -345,7 +346,11 @@ function DashboardPage() {
 								your memory.
 							</CardDescription>
 						</div>
-						<Button onClick={() => setIsCreateOpen(true)} size="sm" className="transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] cursor-pointer rounded-xl px-4 py-2">
+						<Button
+							className="transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] cursor-pointer rounded-xl px-4 py-2"
+							onClick={() => setIsCreateOpen(true)}
+							size="sm"
+						>
 							<Plus className="h-4 w-4 mr-1.5" />
 							Generate token
 						</Button>
@@ -362,14 +367,22 @@ function DashboardPage() {
 								</p>
 							</div>
 						) : (
-							<div className="border border-border/60 rounded-xl overflow-hidden shadow-2xs bg-card/30">
+							<div className="border border-border/60 rounded-xl overflow-hidden shadow-xs bg-card/30">
 								<Table>
 									<TableHeader>
 										<TableRow>
-											<TableHead className="text-xs font-semibold text-muted-foreground/80 uppercase tracking-wider py-4 pl-6">Name</TableHead>
-											<TableHead className="text-xs font-semibold text-muted-foreground/80 uppercase tracking-wider py-4">Token Prefix</TableHead>
-											<TableHead className="text-xs font-semibold text-muted-foreground/80 uppercase tracking-wider py-4">Created</TableHead>
-											<TableHead className="text-xs font-semibold text-muted-foreground/80 uppercase tracking-wider py-4">Last Used</TableHead>
+											<TableHead className="text-xs font-semibold text-muted-foreground/80 uppercase tracking-wider py-4 pl-6">
+												Name
+											</TableHead>
+											<TableHead className="text-xs font-semibold text-muted-foreground/80 uppercase tracking-wider py-4">
+												Token Prefix
+											</TableHead>
+											<TableHead className="text-xs font-semibold text-muted-foreground/80 uppercase tracking-wider py-4">
+												Created
+											</TableHead>
+											<TableHead className="text-xs font-semibold text-muted-foreground/80 uppercase tracking-wider py-4">
+												Last Used
+											</TableHead>
 											<TableHead className="text-xs font-semibold text-muted-foreground/80 uppercase tracking-wider py-4 text-right pr-6">
 												Action
 											</TableHead>
@@ -377,12 +390,17 @@ function DashboardPage() {
 									</TableHeader>
 									<TableBody>
 										{tokens.map((token) => (
-											<TableRow key={token.id} className="transition-colors hover:bg-muted/40">
+											<TableRow
+												className="transition-colors hover:bg-muted/40"
+												key={token.id}
+											>
 												<TableCell className="font-semibold py-4 pl-6 text-foreground/90 text-sm">
 													{token.name || "Unnamed Token"}
 												</TableCell>
 												<TableCell className="font-mono text-xs text-muted-foreground/90 py-4">
-													<code className="bg-muted px-2 py-0.5 rounded border border-border/40 text-muted-foreground">{token.prefix}…</code>
+													<code className="bg-muted px-2 py-0.5 rounded border border-border/40 text-muted-foreground">
+														{token.prefix}…
+													</code>
 												</TableCell>
 												<TableCell className="text-muted-foreground/85 text-xs py-4 font-medium">
 													{new Date(token.created_at).toLocaleDateString(
@@ -391,7 +409,7 @@ function DashboardPage() {
 															year: "numeric",
 															month: "short",
 															day: "numeric",
-														}
+														},
 													)}
 												</TableCell>
 												<TableCell className="text-muted-foreground/85 text-xs py-4 font-medium">
@@ -404,7 +422,7 @@ function DashboardPage() {
 																day: "numeric",
 																hour: "2-digit",
 																minute: "2-digit",
-															}
+															},
 														)
 													) : (
 														<span className="text-muted-foreground/50 italic">
@@ -414,11 +432,11 @@ function DashboardPage() {
 												</TableCell>
 												<TableCell className="text-right pr-6">
 													<Button
+														className="transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
 														onClick={() => handleRevokeToken(token.id)}
 														size="icon-xs"
 														title="Revoke Token"
 														variant="destructive"
-														className="transition-all duration-200 hover:scale-105 active:scale-95 cursor-pointer"
 													>
 														<Trash2 className="h-4 w-4" />
 													</Button>
@@ -505,15 +523,17 @@ function DashboardPage() {
 			{/* Key Reveal Dialog (Returned exactly once) */}
 			<Dialog
 				onOpenChange={(open) => {
-					// Prevent closing via backdrop click or ESC unless copy was confirmed
-					if (!open) {
-						setIsKeyRevealOpen(false);
-						setCreatedKey(null);
-					}
+					// Only allow manual open. Closing is handled via the "I have saved" button.
+					if (open) setIsKeyRevealOpen(true);
 				}}
 				open={isKeyRevealOpen}
 			>
-				<DialogContent className="max-w-md" showCloseButton={false}>
+				<DialogContent
+					className="sm:max-w-2xl"
+					onEscapeKeyDown={(e) => e.preventDefault()}
+					onPointerDownOutside={(e) => e.preventDefault()}
+					showCloseButton={false}
+				>
 					<DialogHeader className="items-center text-center">
 						<div className="p-3 bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 rounded-full mb-3">
 							<AlertTriangle className="h-6 w-6" />
@@ -530,10 +550,11 @@ function DashboardPage() {
 					{createdKey && (
 						<div className="space-y-4 py-4">
 							<div className="bg-muted border border-border rounded-xl p-3.5 flex items-center justify-between gap-3 font-mono text-sm overflow-hidden select-all">
-								<span className="truncate font-semibold text-primary">
+								<span className="break-all font-semibold text-primary">
 									{createdKey.api_key}
 								</span>
 								<Button
+									className="shrink-0"
 									onClick={copyToClipboard}
 									size="icon-sm"
 									variant="ghost"
@@ -598,23 +619,26 @@ function FailedEntryItem({ entry, onRepair }: FailedEntryItemProps) {
 		<div className="border border-border/80 dark:border-border/40 bg-card rounded-2xl p-5 space-y-4 shadow-sm hover:shadow-md transition-all duration-250 hover:border-destructive/20">
 			<div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
 				<div className="space-y-1.5 flex-1 min-w-0">
-					<h4 className="font-bold text-sm text-foreground/90 truncate" title={heading}>
+					<h4
+						className="font-bold text-sm text-foreground/90 truncate"
+						title={heading}
+					>
 						{heading}
 					</h4>
 					{entry.url && (
 						<p className="truncate" title={entry.url}>
 							<a
-								href={entry.url}
-								target="_blank"
-								rel="noopener noreferrer"
 								className="text-muted-foreground hover:text-foreground font-mono text-[11px] select-all transition-colors duration-200"
+								href={entry.url}
+								rel="noopener noreferrer"
+								target="_blank"
 							>
 								{entry.url}
 							</a>
 						</p>
 					)}
 					{entry.error_message && (
-						<div className="text-xs text-destructive bg-destructive/5 dark:bg-destructive/10/30 border border-destructive/15 rounded-xl p-3.5 font-medium leading-relaxed shadow-3xs">
+						<div className="text-xs text-destructive bg-destructive/5 dark:bg-destructive/15 border border-destructive/15 rounded-xl p-3.5 font-medium leading-relaxed shadow-xs">
 							{entry.error_message}
 						</div>
 					)}
@@ -624,17 +648,17 @@ function FailedEntryItem({ entry, onRepair }: FailedEntryItemProps) {
 			<div className="flex flex-col gap-3.5">
 				<Textarea
 					aria-label={`Note for ${heading}`}
+					className="bg-muted/30 dark:bg-muted/20 border border-border/80 focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary/20 text-sm min-h-[90px] rounded-xl px-4 py-3 transition-all duration-200 resize-y"
+					onChange={(e) => setNote(e.target.value)}
 					placeholder="Add summary note to manually index this entry..."
 					value={note}
-					onChange={(e) => setNote(e.target.value)}
-					className="bg-muted/30 dark:bg-muted/10/40 border border-border/80 focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary/20 text-sm min-h-[90px] rounded-xl px-4 py-3 transition-all duration-200 resize-y"
 				/>
 				<div className="flex justify-end">
 					<Button
-						onClick={handleRepair}
-						disabled={!canRepair || repairing}
-						variant="destructive"
 						className="gap-2 w-full md:w-auto px-5 py-2 rounded-xl font-medium text-xs shadow-xs transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 cursor-pointer"
+						disabled={!canRepair || repairing}
+						onClick={handleRepair}
+						variant="destructive"
 					>
 						{repairing ? (
 							<Loader2 className="h-4 w-4 animate-spin" />

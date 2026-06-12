@@ -4,11 +4,14 @@ import { z } from "zod";
 
 // popup -> background
 export const signInMsg      = defineMessage({ name: "sign-in",      request: z.object({}), response: z.object({ ok: z.boolean() }) });
-export const savePageMsg    = defineMessage({ name: "save-page",    request: z.object({ overrideUrl: z.string().url().optional() }), response: SaveResult });
+export const savePageMsg    = defineMessage({ name: "save-page",    request: z.object({}), response: SaveResult });
 export const saveNoteMsg    = defineMessage({ name: "save-note",    request: z.object({ text: z.string().min(1) }), response: SaveResult });
 export const startPickerMsg = defineMessage({ name: "start-picker", request: z.object({}) /* no response: popup closes */ });
+export const startNoteMsg   = defineMessage({ name: "start-note",   request: z.object({}), response: z.object({ ok: z.boolean() }) });
 export const getFailedMsg   = defineMessage({ name: "get-failed",   request: z.object({}), response: z.object({ total: z.number(), entries: z.array(FailedEntry) }) });
 export const repairMsg      = defineMessage({ name: "repair",       request: z.object({ id: z.string(), note: z.string().min(1) }), response: z.object({ ok: z.boolean() }) });
+export const deleteEntryMsg = defineMessage({ name: "delete-entry", request: z.object({ id: z.string() }), response: z.object({ deleted: z.boolean() }) });
+
 
 // content -> background
 export const saveClipMsg    = defineMessage({ name: "save-clip",    request: SaveRequest, response: SaveResult });

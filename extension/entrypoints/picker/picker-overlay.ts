@@ -221,7 +221,7 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
       opacity: "0",
       transition: "opacity 0.25s ease",
       zIndex: "2147483646",
-    } satisfies Partial<CSSStyleDeclaration>);
+    } as any);
     backdrop.addEventListener("click", () => ui.remove());
     container.appendChild(backdrop);
 

@@ -31,6 +31,18 @@ def reset_initialized_paths() -> None:
         _initialized_paths.clear()
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Idempotent in-place migrations for columns added after a table first shipped.
+
+    ``CREATE TABLE IF NOT EXISTS`` never alters an existing table, so a dev auth.db
+    created before a column existed needs an explicit ALTER. Each migration checks
+    ``pragma_table_info`` first, so re-running is a no-op.
+    """
+    code_columns = {row[1] for row in conn.execute("PRAGMA table_info(oauth_codes)")}
+    if code_columns and "client_id" not in code_columns:
+        conn.execute("ALTER TABLE oauth_codes ADD COLUMN client_id TEXT")
+
+
 def _ensure_schema(conn: sqlite3.Connection, db_path: Path) -> None:
     """Apply the schema script once per ``db_path`` (idempotent, thread-safe)."""
     resolved = db_path.resolve()
@@ -40,6 +52,7 @@ def _ensure_schema(conn: sqlite3.Connection, db_path: Path) -> None:
         # Re-check under the lock: another thread may have initialized while we waited.
         if resolved in _initialized_paths:
             return
+        _migrate(conn)
         conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
         conn.commit()
         _initialized_paths.add(resolved)

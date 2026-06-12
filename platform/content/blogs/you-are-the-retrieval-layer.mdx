@@ -1,0 +1,124 @@
+---
+title: "You Became the Retrieval Layer for Your Own AI Tools"
+description: "Your agents start every conversation blind, so you paste the same context into Claude, Cursor, and ChatGPT all day. Brain2 is one store you save to once and every agent reads over MCP. Here's the problem, and the design decisions behind the fix I'm building."
+date: "2026-06-12"
+author: "Prasanjit Dutta"
+published: false
+---
+
+You have maybe 400 GitHub stars. A Notion you stopped opening in March. Bookmarks you'll never scroll back to. And every working day you talk to Claude Code, Cursor, or ChatGPT, and every one of those conversations starts from nothing.
+
+So you do the thing. You remember you saved something useful, you go dig it out of whichever silo it landed in, and you paste it into the chat. You are the retrieval layer. You are the index, the search, and the copy button, multiple times a day, by hand.
+
+That's the part I got tired of. Not the saving. The being-the-glue.
+
+I'm building [Brain2](https://github.com/byjit/Brain2) to delete that job: one place you save to, that every AI tool you use can read on its own. This post is the why and the how, the design decisions and the ones I'm least sure about. It's pre-dogfood, so I'll be honest about what's built versus what still has to prove itself.
+
+## Two failures, then a slow third one
+
+Saving is not the problem. Developers save constantly. The problem is what happens after.
+
+**Saves die.** Every new place to save is another inbox you eventually abandon. The Notion graveyard is real. Stuff piles up and never gets looked at again, so the act of saving quietly stops meaning anything.
+
+**Agents can't see any of it.** This is the one that actually costs you time. Claude doesn't know about your starred repos. Cursor can't read your notes. So the moment context would help, you become the retrieval layer: search the silo, find the thing, paste it in. Every session, blind, starting over.
+
+Those two are the obvious ones. There's a third that only shows up once a store actually gets used, and it's the one that kills memory tools slowly instead of fast.
+
+**The organizational layer rots.** You save enough things and your tags drift into near-duplicates: `python`, `python3`, `py`. Nothing reconciles them. The store fills with noise, recall degrades, and one day you stop trusting it. That's the same death as the dead Notion, just on a delay.
+
+I wanted the fix to survive all three, especially the third, because it's the one most tools ignore until it's too late to fix.
+
+## The shape of the fix
+
+Brain2 is a personal memory store with two ways in and one way out everywhere.
+
+- **Save once.** One click from a Chrome extension, or directly from inside an agent conversation. Saving is the only thing you do. Tagging, summarizing, and indexing all happen in the background. You stay in your flow.
+- **Recall anywhere.** Every AI tool reads the same store over [MCP](https://modelcontextprotocol.io). You ask your agent, it answers from what you saved.
+
+The whole promise is one line: whatever you save is reachable by any AI that connects the MCP server. No filing, no folders, no second job.
+
+That promise is easy to say and full of design traps. Here are the decisions that mattered.
+
+## Decision 1: the note is a routing card, not an archive
+
+The naive version stores everything. You save a page, it keeps the full article body, forever, so you can search it later.
+
+At a few hundred entries that's fine. At the design target of ~10k entries it's a pile of text the agent doesn't actually need. Because what the agent needs first isn't the article. It's a way to decide whether to open the article.
+
+So for a saved page, Brain2 keeps the URL and a short generated note (two or three sentences from Gemini Flash) and **throws the page body away**. The note is a routing card: enough for an agent to judge "is this the thing?" and, if yes, re-fetch the live URL for the full depth.
+
+The rule is conditional, not blanket. You only discard what you can get back:
+
+| Type | Body kept? | Why |
+| --- | --- | --- |
+| `page` | No | The URL re-fetches it |
+| `clip` (a highlight) | Yes | Re-fetching the page won't recover *which part* you grabbed |
+| `conversation` | Yes | Chat URLs are auth-gated, not re-fetchable |
+| `note` | Yes | There's no URL; the text is the only copy |
+
+This has a real cost, and I'd rather name it than hide it: an exact identifier that lives in a page body but never makes it into the summary note isn't directly searchable anymore. The bet is that the agent re-fetches the URL when it needs that depth. Whether that bet holds is one of the things the dogfood is for. If it bites, page bodies come back. For now it's the honest tradeoff: storage and signal-to-noise, paid for with a re-fetch.
+
+## Decision 2: tagging that fights fragmentation instead of causing it
+
+This is the core of the whole thing, and the part most tools get wrong.
+
+The temptation is to hand each save to an LLM and say "tag this." Do that, and at scale you get exactly the `python` / `python3` / `py` rot from earlier, because the model tagging one item in isolation has no memory of the vocabulary it already invented. You've automated the fragmentation.
+
+The fix is to replace the human's memory of "what tags do I already use" with two grounding steps before the model ever proposes a tag.
+
+**First, structured priors.** Before any LLM inference, pull tags that already exist as real metadata. A GitHub repo hands you topics, a detected language, a README. Most pages carry OG/meta keywords. These are high-confidence and they don't fragment, so they seed the candidate set for free.
+
+**Then, RAG-grounded proposal.** Embed the content, fetch the *nearest existing tags by vector similarity* (not all of them, a heavy user has hundreds), and hand those to the model with an instruction shaped like:
+
+```
+Existing related tags in this user's store: python, flask, tutorial.
+Reuse these if they fit. Only invent a new tag if nothing matches.
+```
+
+That one instruction is the single biggest lever against fragmentation. The model isn't guessing in a vacuum anymore. It's reconciling against what's already there.
+
+**And canonicalize on write.** The LLM never touches the tag table directly. Each candidate gets embedded and snapped to the nearest existing tag if cosine similarity is `>= 0.90`, otherwise it's created fresh with a stable concept-level description. The threshold is deliberately high, because with no human watching, over-merging is invisible (nobody notices two real concepts quietly collapsed into one) while under-merging is recoverable later. So I merge conservatively now and leave aggressive cleanup to an offline job that can be reversed.
+
+One detail that bit the design before I caught it: do not naively stem tags to collapse plurals. Stem blindly and `redis` becomes `redi`, `kubernetes` becomes `kubernete`. Normalization stays conservative (lowercase, trim, strip punctuation, a safe plural rule with a tech-term stoplist) and lets the embedding-similarity check catch the real duplicates instead.
+
+The other discipline that makes this pay off: each tag's description is embedded once, at creation, and never regenerated on reuse. Re-embed on every reuse and your tags drift continuously. And the embedding is of the *description* (`"Rust programming language; systems, async, CLI tooling"`), not the bare name, because a one-token name embeds generically and the description disambiguates.
+
+## Decision 3: keyword and vector search, not a choice between them
+
+Recall uses both, merged. BM25 over the title, tags, and any persisted content. Vector search over the note embedding. The two are fused with Reciprocal Rank Fusion (`k=60`).
+
+The split is the point. BM25 wins on exact vocabulary: tags and identifiers like `useEffect` or `SQLAlchemy` match perfectly, the kind of thing a vector blurs. Vector wins on paraphrase: "that http networking thing in rust" finds the entry even when none of those words are stored. Neither alone covers the other's blind spot. Together they do.
+
+This is also why persisting clip and note content matters. The exact identifiers live in that text, so keeping it keeps them lexically findable instead of smeared into a summary.
+
+## Decision 4: let the agent walk the graph
+
+Tags are the only organizing primitive. Flat, multi-assignable, no folders, no "spaces." Structure emerges from shared tags and co-occurrence rather than from a hierarchy you maintain.
+
+I considered building a server-side spreading-activation engine to traverse that graph for you. I rejected it, didn't defer it. The agent already navigates well: it calls `get_tags` to see the landscape, reasons about which tags to filter on, and issues `retrieve` calls. An in-server activation engine would add a pile of tuning knobs to replicate navigation the agent already does, steerably. So the MCP surface stays five tools (`save`, `retrieve`, `list`, `delete`, `get_tags`) and the intelligence stays where it can be reasoned about.
+
+## Decision 5: two auth paths, because MCP clients don't agree
+
+Annoying but unavoidable. Claude Code, Cursor, and Claude Desktop don't all speak the same OAuth dialect; some can't do browser redirect loops or dynamic client registration at all. So auth is hybrid: long-lived Personal Access Tokens for CLI and desktop clients, OAuth 2.1 + PKCE for the web app and the extension. Both resolve to the same `user_id`, which opens that user's isolated SQLite database. One store per user, two ways to prove who you are.
+
+## What's built, and what still has to prove itself
+
+Here's the honest state. The save pipeline, the per-user SQLite store with FTS5 and sqlite-vec in one file, the five MCP tools, the auto-tagging stack, and the capture extension all exist. The architecture is real, not a diagram.
+
+What hasn't happened yet is the only test that counts: two weeks of using nothing but Brain2. No Notion, no stars, no bookmarks. The success bar is specific and I wrote it down before building so I couldn't move it later:
+
+- I save via the extension and recall via Claude Code, daily, for two-plus weeks, without abandoning it.
+- A paraphrased query ("that rust http thing") returns the right entry most of the time.
+- Tags stay coherent. New saves reuse existing tags far more than they invent near-duplicates, and fragmentation doesn't grow with entry count.
+
+That last one is the whole bet. If the tag vocabulary fragments anyway despite the write-time guards, the slow death wins and the design was wrong. I won't know until the store has real scale on it. A few open questions are already logged for that window: does discarding page bodies actually hurt identifier recall, is `0.90` the right snap threshold, is the element picker's selection granularity good enough.
+
+If the loop holds, it opens up. If it doesn't, I spent about two weeks finding out instead of three months.
+
+## What I'd tell myself starting over
+
+Decide what the note is *for* before deciding what to store. Once "the note is a routing card, not a faithful copy" was the frame, half the other decisions fell out of it: bounded input is fine, discarding re-fetchable bodies is fine, a two-sentence summary is the feature and not a compromise. I burned time treating the note as lossy compression before I named it as a routing card, and the design got simpler the moment I did.
+
+Brain2 is open source and pre-1.0. If the problem in the first three paragraphs is your problem too, the repo is the best place to follow along or poke holes in the design.
+
+⭐ Star the repo if you want to support it, it genuinely helps: [github.com/byjit/Brain2](https://github.com/byjit/Brain2)

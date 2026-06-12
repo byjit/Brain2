@@ -43,13 +43,13 @@ class Settings(BaseSettings):
 
     # Async worker knobs (spec §7.4). Verified against the gemini-api-dev skill: the
     # current Flash model is gemini-3.5-flash; the embedding model (used in M4) is
-    # gemini-embedding-001 at 768-dim.
+    # gemini-embedding-2 at 768-dim.
     gemini_summary_model: str = Field(
         default="gemini-3.5-flash", description="Gemini model id for note summarization"
     )
     # Embedding model for the note/tag-description vectors (spec §9.2 768-dim, M4+).
     gemini_embedding_model: str = Field(
-        default="gemini-embedding-001", description="Gemini model id for embeddings"
+        default="gemini-embedding-2", description="Gemini model id for embeddings"
     )
     worker_max_attempts: int = Field(
         default=3, description="Retry ceiling before an entry is marked failed"
@@ -86,10 +86,15 @@ class Settings(BaseSettings):
         default="dev-insecure-secret-change-me",
         description="HS256 secret for Brain2 JWTs and OAuth codes (set in prod)",
     )
-    # TTLs (seconds). Access/session tokens are short-lived; auth codes are very short.
+    # TTLs (seconds). Access/session tokens are short-lived; auth codes are very short;
+    # refresh tokens are long-lived (rotated on every use) so MCP clients outlive the
+    # access-token TTL without interactive re-auth.
     access_token_ttl: int = Field(default=3600, description="Brain2 access-token TTL (s)")
     session_ttl: int = Field(default=1209600, description="Dashboard session cookie TTL (s)")
     auth_code_ttl: int = Field(default=60, description="OAuth authorization-code TTL (s)")
+    refresh_token_ttl: int = Field(
+        default=2592000, description="OAuth refresh-token TTL (s); rotated on every use"
+    )
     # Exact-match allowlist of OAuth redirect URIs (no substring/open-redirect). Comma- or
     # JSON-list-parsed by pydantic-settings from the env var OAUTH_REDIRECT_URIS.
     oauth_redirect_uris: list[str] = Field(

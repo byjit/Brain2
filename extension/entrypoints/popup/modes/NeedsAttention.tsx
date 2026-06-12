@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { AlertCircle, CheckCircle2, Wrench } from "lucide-react";
+import { AlertCircle, CheckCircle2, Wrench, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Spinner } from "@/components/ui/spinner";
-import { getFailedMsg, repairMsg } from "@/services/capture/messages";
+import { getFailedMsg, repairMsg, deleteEntryMsg } from "@/services/capture/messages";
 import type { FailedEntry } from "@/services/capture/types";
 
 interface NeedsAttentionProps {
@@ -15,11 +15,12 @@ interface NeedsAttentionProps {
 /**
  * "Needs attention" repair list. When the count is positive we load the failed
  * entries and let the user attach the missing note and re-submit each one.
- * Repaired rows are removed from local state on success.
+ * Repaired or deleted rows are removed from local state on success.
  */
 export function NeedsAttention({ count }: NeedsAttentionProps) {
   const [entries, setEntries] = useState<FailedEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [isFirstLoad, setIsFirstLoad] = useState(true);
 
   useEffect(() => {
     if (count <= 0) {
@@ -27,11 +28,16 @@ export function NeedsAttention({ count }: NeedsAttentionProps) {
       return;
     }
     let cancelled = false;
-    setLoading(true);
+    if (isFirstLoad) {
+      setLoading(true);
+    }
     getFailedMsg
       .send({}, { to: "background" })
       .then((res) => {
-        if (!cancelled) setEntries(res.entries);
+        if (!cancelled) {
+          setEntries(res.entries);
+          setIsFirstLoad(false);
+        }
       })
       .catch(() => {
         if (!cancelled) toast.error("Couldn't load entries needing attention.");
@@ -44,12 +50,19 @@ export function NeedsAttention({ count }: NeedsAttentionProps) {
     };
   }, [count]);
 
-  if (count <= 0) {
+  if (count <= 0 || entries.length === 0) {
     return (
-      <p className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/30 py-2 px-3 rounded-lg border border-border/40">
-        <CheckCircle2 className="size-3.5 text-emerald-500" />
-        All captured items are active
-      </p>
+      <div className="flex flex-col items-center justify-center py-10 px-4 text-center space-y-3">
+        <div className="flex size-12 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500">
+          <CheckCircle2 className="size-6 animate-pulse" />
+        </div>
+        <div className="space-y-1">
+          <h3 className="text-xs font-bold text-foreground">No attention needed</h3>
+          <p className="text-[11px] text-muted-foreground max-w-[200px] leading-relaxed">
+            All captured items have been successfully enriched and indexed.
+          </p>
+        </div>
+      </div>
     );
   }
 
@@ -57,7 +70,7 @@ export function NeedsAttention({ count }: NeedsAttentionProps) {
     <div className="space-y-3">
       <h2 className="flex items-center gap-1.5 text-xs font-semibold text-destructive uppercase tracking-wider">
         <AlertCircle className="size-3.5 text-destructive" />
-        Needs Attention ({count})
+        Needs Attention ({entries.length})
       </h2>
       {loading ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
@@ -65,12 +78,13 @@ export function NeedsAttention({ count }: NeedsAttentionProps) {
           Loading issues…
         </div>
       ) : (
-        <div className="space-y-3 max-h-[240px] overflow-y-auto pr-1">
+
+        <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
           {entries.map((entry) => (
             <RepairRow
               key={entry.id}
               entry={entry}
-              onRepaired={() =>
+              onRemoved={() =>
                 setEntries((prev) => prev.filter((e) => e.id !== entry.id))
               }
             />
@@ -83,13 +97,14 @@ export function NeedsAttention({ count }: NeedsAttentionProps) {
 
 function RepairRow({
   entry,
-  onRepaired,
+  onRemoved,
 }: {
   entry: FailedEntry;
-  onRepaired: () => void;
+  onRemoved: () => void;
 }) {
   const [note, setNote] = useState(entry.note ?? "");
   const [repairing, setRepairing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const canRepair = note.trim().length > 0;
   const heading = entry.title || entry.url || "Untitled capture";
@@ -105,7 +120,7 @@ function RepairRow({
       );
       if (ok) {
         toast.success("Repaired");
-        onRepaired();
+        onRemoved();
       } else {
         toast.error("Repair failed. Please try again.");
       }
@@ -116,21 +131,61 @@ function RepairRow({
     }
   }
 
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      const { deleted } = await deleteEntryMsg.send(
+        { id: entry.id },
+        { to: "background" }
+      );
+      if (deleted) {
+        toast.success("Entry deleted");
+        onRemoved();
+      } else {
+        toast.error("Failed to delete entry.");
+      }
+    } catch {
+      toast.error("Failed to delete entry.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="rounded-xl border border-destructive/15 bg-destructive/5/80 p-3 space-y-2.5 shadow-sm transition-all duration-200 hover:border-destructive/35 hover:shadow-md">
-      <div className="space-y-1">
-        <p className="truncate text-xs font-semibold text-foreground" title={heading}>
-          {heading}
-        </p>
-        {entry.url && (
-          <p className="truncate text-[10px] text-muted-foreground" title={entry.url}>
-            {entry.url}
+      <div className="flex items-start justify-between gap-2">
+        <div className="space-y-0.5 min-w-0 flex-1">
+          <p className="truncate text-xs font-semibold text-foreground" title={heading}>
+            {heading}
           </p>
-        )}
-        {entry.error_message && (
-          <p className="text-[10px] text-destructive leading-tight font-medium bg-destructive/10 p-1.5 rounded-md border border-destructive/10">{entry.error_message}</p>
-        )}
+          {entry.url && (
+            <p className="truncate text-[10px] text-muted-foreground" title={entry.url}>
+              {entry.url}
+            </p>
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md cursor-pointer shrink-0 transition-all duration-200"
+          onClick={handleDelete}
+          disabled={deleting || repairing}
+          aria-label={`Delete ${heading}`}
+        >
+          {deleting ? (
+            <Spinner className="size-3" />
+          ) : (
+            <Trash2 className="size-3.5" />
+          )}
+        </Button>
       </div>
+
+      {entry.error_message && (
+        <p className="text-[10px] text-destructive leading-tight font-medium bg-destructive/10 p-1.5 rounded-md border border-destructive/10">
+          {entry.error_message}
+        </p>
+      )}
+
       <Textarea
         aria-label={`Note for ${heading}`}
         placeholder="Add summary note to manually index this entry…"
@@ -143,7 +198,7 @@ function RepairRow({
         size="sm"
         className="w-full h-8 bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer rounded-lg text-xs font-medium gap-1.5 transition-all duration-200 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50"
         onClick={handleRepair}
-        disabled={!canRepair || repairing}
+        disabled={!canRepair || repairing || deleting}
       >
         {repairing ? <Spinner className="size-3.5 animate-spin" /> : <Wrench className="size-3.5" />}
         Repair Entry
@@ -151,3 +206,4 @@ function RepairRow({
     </div>
   );
 }
+

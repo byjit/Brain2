@@ -38,5 +38,16 @@ def resolve_bearer(
     if token is None:
         return None
     if api_keys.has_api_key_prefix(token):
-        return api_keys.verify_key(conn, token)
-    return jwt_service.verify_token(token, secret=secret)
+        user_id = api_keys.verify_key(conn, token)
+    else:
+        user_id = jwt_service.verify_token(token, secret=secret)
+
+    if user_id is None:
+        return None
+
+    # Verify that the user exists in the central users table
+    row = conn.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    if row is None:
+        return None
+    return user_id
+

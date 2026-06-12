@@ -128,23 +128,39 @@ def process_entry(
             target = row["url"] or entry_id
             _record_failure(conn, entry_id, f"no extractable content from {target}", ceiling)
             return True
-        conn.execute(
-            """
-            UPDATE entries
-               SET note = ?, note_source = ?, status = 'active',
-                   error_message = NULL, next_retry_at = NULL, updated_at = ?
-             WHERE id = ?
-            """,
-            (note, note_source, _now_iso(), entry_id),
-        )
+        # For 'page' entries, discard the temporarily persisted raw body text upon successful
+        # activation (spec §7.1 / §7.3). For other types (clip/conversation/note), keep it.
+        if row["type"] == "page":
+            conn.execute(
+                """
+                UPDATE entries
+                   SET note = ?, note_source = ?, status = 'active', content = NULL,
+                       error_message = NULL, next_retry_at = NULL, updated_at = ?
+                 WHERE id = ?
+                """,
+                (note, note_source, _now_iso(), entry_id),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE entries
+                   SET note = ?, note_source = ?, status = 'active',
+                       error_message = NULL, next_retry_at = NULL, updated_at = ?
+                 WHERE id = ?
+                """,
+                (note, note_source, _now_iso(), entry_id),
+            )
         # Re-index FTS from the effective row so title + content stay searchable alongside
-        # tags. The tagging path already refreshed FTS (with tags_text) in _persist_tags, so
-        # only the non-tagging path needs to index here — a single owner of the FTS write.
-        if not tagging_enabled:
+        # tags. The tagging path already refreshed FTS in reconcile_tags.
+        # But for 'page' entries, since we just cleared the content in the DB, we MUST
+        # re-index FTS (even if tagging was enabled) to clear the page body text from FTS.
+        if row["type"] == "page" or not tagging_enabled:
             effective = conn.execute(
-                "select title, content from entries where id = ?", (entry_id,)
+                "select title, content, type from entries where id = ?", (entry_id,)
             ).fetchone()
-            index_entry(conn, entry_id, effective["title"], effective["content"])
+            # For page type, do not index the body content in FTS.
+            fts_content = None if effective["type"] == "page" else effective["content"]
+            index_entry(conn, entry_id, effective["title"], fts_content)
         # Embed the NOTE (not the body) into entries_vec for semantic search (spec §11);
         # delete-then-insert keeps exactly one vector per entry across re-enrichment.
         if embedder is not None:

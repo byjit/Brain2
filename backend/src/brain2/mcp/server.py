@@ -71,10 +71,23 @@ class TagInfo(BaseModel):
 def _resolve_user(ctx: Context) -> str:
     """Resolve the request's Bearer token to a user id, or raise PermissionError."""
     request = ctx.request_context.request
-    header = request.headers.get("authorization") if request is not None else None
+    if request is None:
+        raise PermissionError("Unauthenticated: no request context available.")
+    
+    header = request.headers.get("authorization")
+    if not header:
+        raise PermissionError("Unauthenticated: missing Authorization header.")
+        
+    if not header.lower().startswith("bearer "):
+        raise PermissionError(
+            "Unauthenticated: Authorization header must start with 'Bearer ' prefix. "
+            "Please format the custom header in the MCP Inspector as Key='Authorization' and Value='Bearer br2_live_...'"
+        )
+        
     user_id = auth.resolve_token_to_user_id(header)
     if user_id is None:
-        raise PermissionError("Unauthenticated: a valid Bearer token is required.")
+        raise PermissionError("Unauthenticated: invalid, expired, or unrecognized Bearer token.")
+        
     return user_id
 
 

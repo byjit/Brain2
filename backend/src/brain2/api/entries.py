@@ -13,6 +13,7 @@ from brain2.models.entries import (
     FailedEntry,
     RepairEntryRequest,
     SaveEntryResponse,
+    DeleteEntryResponse,
 )
 from brain2.services.entries import failed_entries, save_entry
 from brain2.services.providers.factory import build_providers, build_tagging_providers
@@ -83,3 +84,14 @@ def repair_entry_endpoint(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="entry not found")
     return EntryResponse(**dict(row))
+
+
+@router.delete("/{entry_id}", response_model=DeleteEntryResponse)
+def delete_entry_endpoint(
+    entry_id: str,
+    conn: sqlite3.Connection = Depends(get_db),
+) -> DeleteEntryResponse:
+    """Delete an entry and all its derived data (spec §10 delete)."""
+    from brain2.services.entries import delete_entry
+    existed = delete_entry(conn, entry_id)
+    return DeleteEntryResponse(deleted=existed)

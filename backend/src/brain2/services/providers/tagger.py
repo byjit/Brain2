@@ -107,7 +107,9 @@ def _build_prompt(request: TagRequest, *, min_tags: int, max_tags: int) -> str:
     existing = ", ".join(request.nearest_existing_tags) or "(none yet)"
     priors = ", ".join(request.structured_tags) or "(none)"
     summary_clause = (
-        "First write a neutral 2-3 sentence summary note of the content in `note`. "
+        "First write a neutral 2-3 sentence note in `note` describing what this source is "
+        "about and what a reader would find in it, so someone can judge from the note alone "
+        "whether to open the source for the full content. "
         if request.needs_summary
         else "Leave `note` empty (the note is already set). "
     )

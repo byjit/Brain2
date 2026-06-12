@@ -59,17 +59,25 @@ Save content from anywhere, and bring it as context to every AI agents you use.
   streamable-HTTP transport at `/connect` (the spec §6 names SSE; see backend/ARCHITECTURE.md)
 - **Storage**: Per-user SQLite (`{user_id}.db`) with FTS5 (BM25 keyword search) + sqlite-vec (`vec0`, 768-dim).
   A separate central `auth.db` (default `{DATA_DIR}/../auth.db`, gitignored) holds identities,
-  API-key hashes, and OAuth codes — credentials resolve to a `user_id` there before the per-user DB opens
+  API-key hashes, OAuth codes, dynamically registered OAuth clients, and rotating refresh tokens —
+  credentials resolve to a `user_id` there before the per-user DB opens
 - **Auth (spec §12)**: Hybrid — Personal Access Tokens (API keys, `br2_live_…`, SHA-256 hashed) for
-  CLI/Desktop, Google Sign-In + Brain2-issued OAuth 2.1 + PKCE (S256) for web/extension. Brain2 access +
-  session tokens are HS256 JWTs via `pyjwt`. Google identity verification sits behind an
-  `IdentityProvider` interface with an offline fake, so the suite never contacts Google. Endpoints:
+  CLI/Desktop (Claude Code, Cursor, Copilot), Google Sign-In + Brain2-issued OAuth 2.1 + PKCE (S256)
+  for web/extension and MCP clients with OAuth discovery (Claude web custom connectors: RFC 9728/8414
+  metadata incl. the path-suffix PRM variant, RFC 7591 Dynamic Client Registration at
+  `POST /oauth/register`, and a rotating `refresh_token` grant). Identities are keyed on the stable
+  Google `sub`, so the same Google account links extension, platform, and MCP to the same `user_id`
+  and `{user_id}.db`. Brain2 access + session tokens are HS256 JWTs via `pyjwt`. Google identity
+  verification sits behind an `IdentityProvider` interface with an offline fake, so the suite never
+  contacts Google. Endpoints:
   `GET /auth/login`, `GET /api/auth/callback/google`, `GET /auth/me`, `POST /auth/logout`, `GET /oauth/authorize`,
-  `POST /oauth/token`, and `/settings/tokens` (POST/GET/DELETE). Every REST entry endpoint and every
-  MCP tool requires a valid `Bearer` credential
+  `POST /oauth/token` (authorization_code + refresh_token grants), `POST /oauth/register`, and
+  `/settings/tokens` (POST/GET/DELETE). Every REST entry endpoint and every MCP tool requires a valid
+  `Bearer` credential; `/connect/mcp` challenges missing AND invalid/expired tokens with
+  401 + `WWW-Authenticate`
 - **LLM / enrichment**: `google-genai` SDK + Gemini Flash for note summarization and the
   M5 single combined auto-tagging call (structured output: note + tags + new-tag
-  descriptions), `gemini-embedding-001` (768-dim) for note/query/tag-description embeddings
+  descriptions), `gemini-embedding-2` (768-dim) for note/query/tag-description embeddings
   (async worker); `httpx` + `trafilatura` for page re-fetch and body/metadata extraction,
   and `httpx` for the unauthenticated GitHub REST API (structured-source tag priors). All
   sit behind injectable provider interfaces with offline fakes (see backend/ARCHITECTURE.md
@@ -90,6 +98,7 @@ All root commands are executed from the repository root:
 - `make test`: Run all test suites across the project (backend pytest, platform vitest, extension vitest).
 - `make build`: Build production bundles for the platform and the extension.
 - `make clean`: Clean up all node_modules, build output directories, and Python caches.
+- `make reset-db`: Completely reset the database (deletes the entire `data` directory, wiping all saved entries, tags, and local authentication sessions).
 
 ### Extension scripts
 

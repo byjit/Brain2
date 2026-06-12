@@ -10,9 +10,11 @@ import {
   saveNoteMsg,
   saveClipMsg,
   startPickerMsg,
+  startNoteMsg,
   signInMsg,
   getFailedMsg,
   repairMsg,
+  deleteEntryMsg,
   extractPageMsg,
 } from "@/services/capture/messages";
 
@@ -71,20 +73,25 @@ async function injectPicker(): Promise<void> {
   });
 }
 
+/** Inject the quick note content script into the active tab. */
+async function injectNote(): Promise<void> {
+  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) return;
+  await browser.scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ["/content-scripts/note.js"],
+  });
+}
+
 /**
  * Register every message handler against the (already-installed) default bridge.
  * Split out so the bridge is set up first; each `.handle()`/`.on()` subscribes
  * synchronously via webext-bridge's port transport.
  */
 function registerMessageHandlers(): void {
-  // ---- save page (current tab via injected extractor, or override URL only) ----
-  savePageMsg.handle(async ({ overrideUrl }) => {
+  // ---- save page (current tab via injected extractor) ----
+  savePageMsg.handle(async () => {
     await requireToken(); // gate early
-    if (overrideUrl) {
-      // We can't scrape a page we're not on; send the URL — the backend re-fetches it.
-      const host = new URL(overrideUrl).hostname;
-      return client.save({ type: saveTypeForHost(host), url: overrideUrl });
-    }
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id || !tab.url) throw new Error("No active tab to save");
     const host = new URL(tab.url).hostname;
@@ -124,6 +131,16 @@ function registerMessageHandlers(): void {
     injectPicker().catch(() => {});
   });
 
+  // ---- start quick note dialog (returns ok status) ----
+  startNoteMsg.handle(async () => {
+    try {
+      await injectNote();
+      return { ok: true };
+    } catch {
+      return { ok: false };
+    }
+  });
+
   // ---- interactive sign-in ----
   signInMsg.handle(async () => {
     try {
@@ -151,6 +168,18 @@ function registerMessageHandlers(): void {
     await needsAttentionStore.set(next);
     await updateBadge();
     return { ok: true };
+  });
+
+  // ---- delete/dismiss a failed entry ----
+  deleteEntryMsg.handle(async ({ id }) => {
+    await requireToken();
+    const deleted = await client.deleteEntry(id);
+    if (deleted) {
+      const next = Math.max(0, (await needsAttentionStore.get()) - 1);
+      await needsAttentionStore.set(next);
+      await updateBadge();
+    }
+    return { deleted };
   });
 }
 

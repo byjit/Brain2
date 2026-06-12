@@ -35,8 +35,13 @@ def issue_code(
     code_challenge: str,
     redirect_uri: str,
     ttl: int,
+    client_id: str | None = None,
 ) -> str:
-    """Issue a single-use authorization code bound to the S256 challenge + redirect_uri."""
+    """Issue a single-use authorization code bound to the S256 challenge + redirect_uri.
+
+    ``client_id`` records which OAuth client the code was issued to, so the token
+    endpoint can reject a redemption attempted under a different client identity.
+    """
     # Opportunistically purge spent/expired rows so this shared table stays bounded.
     conn.execute(
         "DELETE FROM oauth_codes WHERE consumed_at IS NOT NULL OR expires_at < ?",
@@ -46,9 +51,9 @@ def issue_code(
     expires_at = (_now() + timedelta(seconds=ttl)).isoformat()
     conn.execute(
         "INSERT INTO oauth_codes "
-        "(code, user_id, code_challenge, code_challenge_method, redirect_uri, expires_at) "
-        "VALUES (?,?,?,?,?,?)",
-        (code, user_id, code_challenge, _S256, redirect_uri, expires_at),
+        "(code, user_id, code_challenge, code_challenge_method, redirect_uri, client_id, "
+        "expires_at) VALUES (?,?,?,?,?,?,?)",
+        (code, user_id, code_challenge, _S256, redirect_uri, client_id, expires_at),
     )
     conn.commit()
     return code
@@ -60,21 +65,26 @@ def consume_code(
     code: str,
     code_verifier: str,
     redirect_uri: str,
+    client_id: str | None = None,
 ) -> str | None:
     """Verify + consume a code, returning its ``user_id`` or None if invalid.
 
-    Rejects: unknown/already-consumed codes, expired codes, a redirect_uri mismatch, and a
-    code_verifier that does not match the stored S256 challenge. Consumption is atomic
+    Rejects: unknown/already-consumed codes, expired codes, a redirect_uri mismatch, a
+    client_id that does not match the one the code was issued to (STRICT: a bound code
+    cannot be redeemed by omitting client_id; only legacy NULL rows skip the check), and
+    a code_verifier that does not match the stored S256 challenge. Consumption is atomic
     (single-use): the row is marked consumed before returning success, so a replay fails.
     """
     row = conn.execute(
-        "SELECT user_id, code_challenge, redirect_uri, expires_at, consumed_at "
+        "SELECT user_id, code_challenge, redirect_uri, client_id, expires_at, consumed_at "
         "FROM oauth_codes WHERE code=?",
         (code,),
     ).fetchone()
     if row is None or row["consumed_at"] is not None:
         return None
     if row["redirect_uri"] != redirect_uri:
+        return None
+    if row["client_id"] is not None and client_id != row["client_id"]:
         return None
     if datetime.fromisoformat(row["expires_at"]) < _now():
         return None

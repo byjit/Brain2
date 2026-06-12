@@ -26,14 +26,11 @@ from brain2.services.canonicalize import TagCandidate, canonicalize_candidates
 from brain2.services.fts import index_entry
 from brain2.services.providers.embedder import EMBED_INPUT_MAX_CHARS, Embedder
 from brain2.services.providers.page_fetcher import PageContent
+from brain2.services.providers.summarizer import SUMMARY_INPUT_MAX_CHARS
 from brain2.services.providers.tagger import Tagger, TagRequest
 from brain2.services.structured_tags import StructuredTagSource
 from brain2.services.tag_counters import apply_edge_diff
 from brain2.services.tags_vector import nearest_tags
-
-# Bound on basis text sent to the embedder/tagger: the shared embedder input cap, so an
-# oversized basis cannot fail every attempt (the model has an input token budget).
-_BASIS_MAX_CHARS = EMBED_INPUT_MAX_CHARS
 
 
 def apply_tags(
@@ -57,20 +54,26 @@ def apply_tags(
     ``needs_summary`` the single tagger call also produces the summary note; otherwise the
     note is already set and the call returns tags only.
     """
-    basis = basis_text[:_BASIS_MAX_CHARS]
+    # Two distinct bounds on the basis (spec §7.3): the embedder has a hard ~2k-token
+    # budget so it reads at most EMBED_INPUT_MAX_CHARS, while the note-writer/tagger can
+    # read a larger prefix (SUMMARY_INPUT_MAX_CHARS) to produce a meaningful routing-card
+    # note without being starved on a long article. Both are prefixes — the full source is
+    # re-fetchable (page) or FTS-indexed (clip/conversation), so nothing is lost.
+    basis_for_embedding = basis_text[:EMBED_INPUT_MAX_CHARS]
+    basis_for_tagger = basis_text[:SUMMARY_INPUT_MAX_CHARS]
 
     # 1. Structured-source priors (high-confidence metadata; never raise). The page's
     # OG/meta keywords + a GitHub repo's topics/language seed the candidate set (spec §7.2).
     structured = source.priors(url=url, page=page)
 
     # 2. Nearest EXISTING tags via the basis embedding (RAG grounding, spec §7.2).
-    basis_embedding = embedder.embed(basis)
+    basis_embedding = embedder.embed(basis_for_embedding)
     nearest = [name for name, _sim in nearest_tags(conn, basis_embedding, limit=nearest_limit)]
 
     # 3. The SINGLE combined LLM call (exactly one per entry).
     proposal = tagger.propose(
         TagRequest(
-            basis_text=basis,
+            basis_text=basis_for_tagger,
             structured_tags=structured,
             nearest_existing_tags=nearest,
             needs_summary=needs_summary,
@@ -165,9 +168,11 @@ def reconcile_tags(conn: sqlite3.Connection, entry_id: str, final_tags: list[str
 
     # Denormalize the final tags into entries_fts so a tag keyword matches via BM25.
     row = conn.execute(
-        "SELECT title, content FROM entries WHERE id = ?", (entry_id,)
+        "SELECT title, content, type FROM entries WHERE id = ?", (entry_id,)
     ).fetchone()
-    index_entry(conn, entry_id, row["title"], row["content"])
+    # For page type, do not index the body content in FTS, since it is not permanently persisted.
+    fts_content = None if row["type"] == "page" else row["content"]
+    index_entry(conn, entry_id, row["title"], fts_content)
 
 
 def _persist_tags(conn: sqlite3.Connection, entry_id: str, tags: list[str]) -> None:

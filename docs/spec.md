@@ -5,7 +5,7 @@
 **Status:** Draft · Technical decisions finalized, not yet implemented
 **Author:** Prasanjit Dutta
 
-> **Changes from 0.5:** Added §8 Capture UX - the three popup-driven save modes (save page, element picker, custom note), no keyboard shortcuts, fire-and-forget confirmation, and the two moments the extension asks for attention (first-run sign-in, failure badge). Subsequent sections renumbered.
+> **Changes from 0.5:** Added §8 Capture UX - the three popup-driven save modes (save page, element picker, custom note), no keyboard shortcuts, fire-and-forget confirmation, and the two moments the extension asks for attention (first-run sign-in, failure badge). Added §7.5 Large content and capture size bounds - the note-is-a-routing-card rationale, tiered prefix caps (page capture / note-writer / embedder), and a §15 open question on uncapped persisted content. Subsequent sections renumbered.
 
 ---
 
@@ -240,6 +240,20 @@ Background processing can fail - Gemini rate limits, a page that yields nothing,
 - **Exhausted retries set `status = failed`** with `error_message`, and the entry surfaces as a **"needs attention"** count in the extension badge and the web dashboard. This narrow list of failed entries is the only browse surface in v1 - it exists to repair, not to browse.
 - **The user repairs it** by filling the note (and optionally tags) via `PATCH /entries/{id}`. On submit, the entry re-enters processing using the user's text as the basis: embed note → auto-tag from it → index → `active`. A failed entry is never a silent black hole; it is always recoverable by the user.
 
+### 7.5 Large content and capture size bounds
+
+A long article (a Medium deep-dive can be hundreds of KB) must not break the pipeline. The handling follows directly from the **note-is-a-routing-card** model (§7.3): the note exists so an agent can judge, _from the note alone_, whether to open the URL / re-fetch the body. It is not a faithful compression of the source. So reading a generous **prefix** of the body is sufficient to write a good note — an article's thesis, scope, and key specifics live up front. This makes bounding the input an alignment with the goal, not a lossy compromise.
+
+Three tiered caps, each a prefix, with the full source never lost (re-fetchable for `page`, FTS-indexed for `clip`/`conversation`/`note`):
+
+| Bound | Where | Size | Why |
+| ----- | ----- | ---- | --- |
+| **Page capture** | Extension, `page` only | ~32k chars | The body is discarded server-side after summarizing, so shipping a whole long article only wastes bandwidth and risks the backend body-size limit. A generous prefix is sent. `conversation`/`clip`/`note` bodies are persisted (not re-fetchable) and are **not** capped here. |
+| **Note-writer input** | Backend, before the Gemini note/tag call | ~16k chars | How much source the LLM reads to write the routing-card note. Larger than the embedder cap so a long article still yields a meaningful note; bounded so LLM cost/latency stays constant regardless of length. |
+| **Embedder input** | Backend, before every embed | ~8k chars | The embedding model has a hard ~2k-token budget; an oversized text would fail every retry and turn a valid entry into a permanent failure. A bounded prefix still yields a representative vector. |
+
+The note-writer and embedder caps are **deliberately decoupled**: the embedder's is a hard model limit, while the note-writer's is a quality/cost knob the LLM can comfortably exceed the embedder on. Collapsing them to one value (an earlier shortcut) starved the summary on long articles.
+
 ---
 
 ## 8. Capture UX (Chrome Extension)
@@ -250,7 +264,7 @@ The extension is the only capture surface in v1, and the only place the user act
 
 Clicking the toolbar icon opens a popup with three choices.
 
-1. **Save page.** Saves the current tab. One click, commits instantly, a toast confirms. No review step - this is high-confidence and the common case. The popup makes this the prominent default. If the tab is on a detected chat domain, the same button captures the conversation thread instead of running Readability, mapping to the `conversation` type. A secondary field lets the user paste a different URL to save something they're not currently on.
+1. **Save page.** Saves the current tab. One click, commits instantly, a toast confirms. No review step - this is high-confidence and the common case. The popup makes this the prominent default. If the tab is on a detected chat domain, the same button captures the conversation thread instead of running Readability, mapping to the `conversation` type.
 2. **Select content (element picker).** The popup closes and the page enters pick mode with an in-page overlay. As the cursor moves, the element under it is outlined with a highlight box (an accent color, not red - red reads as destructive). The box snaps to a logical block, and the user can expand or contract the selection up and down the DOM to grab the right block rather than a single nested node. A click captures that element; its HTML is converted to Markdown - preserving code blocks, lists, and links - and dropped into an editable field in a small in-page card. The user trims if needed and saves. The review step is deliberate: picking is the most error-prone mode, so it earns the extra look. Escape cancels pick mode. Maps to the `clip` type.
 3. **Custom note.** A text field in the popup. The user types and saves. No URL, no summarization. Maps to the `note` type.
 
@@ -643,6 +657,7 @@ v2 candidates already designed-for: web management app, offline tag-clustering/m
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------------------------------------------------------------ |
 | Conversation content is persisted (URLs aren't externally re-fetchable). Is "Save page with chat-domain detection" the right capture path, or does conversation deserve its own explicit mode? | Medium   | Decide in step 8; start with auto-detection                  |
 | Does discarding `page` body hurt exact-identifier recall on pages, given the agent can re-fetch the URL?                                                                                       | High     | Watch in dogfood (step 9); add page content only if it bites |
+| `conversation`/`clip` content is persisted and NOT capped at capture (it isn't re-fetchable, §7.5), so a very long chat thread can hit the backend body-size limit and 422. Chunk, raise the cap, or truncate-with-marker?                                  | Medium   | Watch in dogfood (step 9); only act if a long thread is rejected |
 | Element picker: is DOM expand/contract granularity enough, or do users still mis-grab blocks?                                                                                                  | Medium   | Observe in dogfood (step 9)                                  |
 | Is the canonicalize threshold (~0.90) right, or does it over- or under-merge in practice?                                                                                                      | High     | Tune against real saves in step 5; start high                |
 | Right tags-per-entry cap (3-5)?                                                                                                                                                                | Medium   | Observe in step 5                                            |

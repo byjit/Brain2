@@ -1,6 +1,6 @@
 # Makefile to manage Brain2 development services
 
-.PHONY: help setup dev dev-backend dev-platform dev-extension dev-all test test-backend test-platform test-extension build build-platform build-extension clean clean-backend clean-platform clean-extension
+.PHONY: help setup dev dev-backend dev-platform dev-extension dev-all test test-backend test-platform test-extension build build-platform build-extension clean clean-backend clean-platform clean-extension reset-db
 
 # Default target: show help
 help:
@@ -33,8 +33,9 @@ help:
 	@echo "  make build-platform  - Build platform production bundle"
 	@echo "  make build-extension - Build extension production bundle"
 	@echo ""
-	@echo "Clean:"
+	@echo "Clean & Reset:"
 	@echo "  make clean           - Clean all build artifacts, caches, and node_modules"
+	@echo "  make reset-db        - Completely reset the database (wipes all data & auth sessions)"
 	@echo "========================================================================"
 
 # Env setup
@@ -134,3 +135,9 @@ clean-platform:
 clean-extension:
 	@echo "Cleaning extension..."
 	rm -rf extension/node_modules extension/.output extension/.wxt
+
+# Database Reset
+reset-db:
+	@echo "Resetting database (deleting local databases and authentication sessions)..."
+	rm -rf data
+

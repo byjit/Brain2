@@ -1,5 +1,6 @@
 import { defineCollection, defineConfig } from "@content-collections/core";
 import { compileMDX } from "@content-collections/mdx";
+import remarkGfm from "remark-gfm";
 import { z } from "zod";
 
 const blogs = defineCollection({
@@ -15,7 +16,9 @@ const blogs = defineCollection({
 		content: z.string(),
 	}),
 	transform: async (document, context) => {
-		const mdx = await compileMDX(context, document);
+		const mdx = await compileMDX(context, document, {
+			remarkPlugins: [remarkGfm],
+		});
 		return {
 			...document,
 			mdx,
@@ -35,7 +38,9 @@ const terms = defineCollection({
 		content: z.string(),
 	}),
 	transform: async (document, context) => {
-		const mdx = await compileMDX(context, document);
+		const mdx = await compileMDX(context, document, {
+			remarkPlugins: [remarkGfm],
+		});
 		return {
 			...document,
 			mdx,
@@ -55,7 +60,9 @@ const privacy = defineCollection({
 		content: z.string(),
 	}),
 	transform: async (document, context) => {
-		const mdx = await compileMDX(context, document);
+		const mdx = await compileMDX(context, document, {
+			remarkPlugins: [remarkGfm],
+		});
 		return {
 			...document,
 			mdx,
@@ -76,7 +83,9 @@ const changelog = defineCollection({
 		content: z.string(),
 	}),
 	transform: async (document, context) => {
-		const mdx = await compileMDX(context, document);
+		const mdx = await compileMDX(context, document, {
+			remarkPlugins: [remarkGfm],
+		});
 		return {
 			...document,
 			mdx,

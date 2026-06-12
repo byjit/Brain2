@@ -16,7 +16,7 @@ this stays unit-testable offline.
 from dataclasses import dataclass
 
 from brain2.services.providers.page_fetcher import PageContent, PageFetcher
-from brain2.services.providers.summarizer import Summarizer
+from brain2.services.providers.summarizer import SUMMARY_INPUT_MAX_CHARS, Summarizer
 
 # A clip shorter than this is its own note — summarizing a highlight loses the value
 # the user deliberately selected (spec §7.3).
@@ -73,7 +73,18 @@ def resolve_basis(entry: dict, *, fetcher: PageFetcher) -> NoteBasis:
             return NoteBasis(text=text, note_source="body", needs_summary=False, note=text)
         return NoteBasis(text=text, note_source="body", needs_summary=True, note="")
 
-    # page: body not persisted -> re-fetch and walk the ladder. The fetched page is carried
+    # page: check if client-scraped content was temporarily persisted first.
+    body = (entry.get("content") or "").strip()
+    if body:
+        return NoteBasis(
+            text=body,
+            note_source="body",
+            needs_summary=True,
+            note="",
+            page=PageContent(body_text=body, title=entry.get("title")),
+        )
+
+    # fallback: re-fetch and walk the ladder. The fetched page is carried
     # on the result so the caller can derive OG/meta-keyword priors without re-fetching.
     page = fetcher.fetch(entry["url"])
     body = (page.body_text or "").strip()
@@ -120,16 +131,32 @@ def _resolve_from_text(text: str, summarizer: Summarizer) -> ResolvedNote:
     if len(text) < _SHORT_CLIP_MAX_CHARS:
         # Short highlight: the selection is the note.
         return ResolvedNote(note=text, note_source="body")
-    return ResolvedNote(note=summarizer.summarize(text), note_source="body")
+    # Summarize a bounded prefix: the note is a routing card, not a full recap (spec §7.3),
+    # and the full text stays FTS-searchable, so a prefix is enough and caps LLM cost.
+    return ResolvedNote(
+        note=summarizer.summarize(text[:SUMMARY_INPUT_MAX_CHARS]), note_source="body"
+    )
 
 
 def _resolve_page(entry: dict, fetcher: PageFetcher, summarizer: Summarizer) -> ResolvedNote:
     """Re-fetch a page and resolve via body -> og/meta -> title (spec §7.3 ladder)."""
+    # Check if client-scraped content was temporarily persisted first.
+    body = (entry.get("content") or "").strip()
+    if body:
+        return ResolvedNote(
+            note=summarizer.summarize(body[:SUMMARY_INPUT_MAX_CHARS]), note_source="body"
+        )
+
+    # fallback to re-fetch:
     page = fetcher.fetch(entry["url"])
 
     body = (page.body_text or "").strip()
     if body:
-        return ResolvedNote(note=summarizer.summarize(body), note_source="body")
+        # Summarize a bounded prefix (routing-card note, spec §7.3); the page body is
+        # re-fetchable via the URL, so nothing is lost by reading only the prefix here.
+        return ResolvedNote(
+            note=summarizer.summarize(body[:SUMMARY_INPUT_MAX_CHARS]), note_source="body"
+        )
 
     # og:description / meta description rung — publisher teaser copy, taken verbatim.
     teaser = _first_nonempty(page.og_description, page.meta_description)

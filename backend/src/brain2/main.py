@@ -18,6 +18,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from brain2.api import auth as auth_api
 from brain2.api import entries, settings_tokens
+from brain2.mcp import auth as mcp_auth
 from brain2.mcp.server import build_mcp_server
 from brain2.services.worker import run_worker_loop
 
@@ -72,6 +73,7 @@ def create_app(
             "http://localhost:3000",
             "http://localhost:5173",
         ],
+        allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -82,19 +84,33 @@ def create_app(
     async def mcp_auth_challenge_middleware(request: Request, call_next):
         """MCP connection-level authorization challenge middleware (spec §12).
 
-        Bypasses CORS OPTIONS requests. Challenges missing Authorization headers with
-        a 401 response pointing to the Protected Resource Metadata endpoint.
+        Bypasses CORS OPTIONS requests. Challenges a missing Authorization header AND an
+        invalid/expired credential with HTTP 401 + ``WWW-Authenticate`` pointing at the
+        Protected Resource Metadata — the signal MCP clients (Claude web) need to start
+        or refresh their OAuth flow. Without this, an expired token would surface as a
+        tool-level error inside a 200 response and the client would never re-authorize.
         """
         path = request.url.path
         if (path == f"{MCP_MOUNT}/mcp" or path.startswith(f"{MCP_MOUNT}/mcp/")) and request.method != "OPTIONS":
+            base_url = str(request.base_url).rstrip("/")
+            # RFC 9728 path-suffix metadata URL for the MCP resource.
+            metadata_url = f"{base_url}/.well-known/oauth-protected-resource{MCP_MOUNT}/mcp"
             auth_header = request.headers.get("authorization")
             if not auth_header:
-                base_url = str(request.base_url).rstrip("/")
-                metadata_url = f"{base_url}/.well-known/oauth-protected-resource"
                 return JSONResponse(
                     status_code=401,
                     content={"detail": "Unauthorized"},
                     headers={"WWW-Authenticate": f'Bearer resource_metadata="{metadata_url}"'},
+                )
+            if mcp_auth.resolve_token_to_user_id(auth_header) is None:
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Invalid or expired token"},
+                    headers={
+                        "WWW-Authenticate": (
+                            f'Bearer error="invalid_token", resource_metadata="{metadata_url}"'
+                        )
+                    },
                 )
         return await call_next(request)
 

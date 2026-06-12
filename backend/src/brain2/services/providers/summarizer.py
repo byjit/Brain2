@@ -7,11 +7,24 @@ The real ``GeminiSummarizer`` uses the google-genai SDK + Gemini Flash.
 
 from typing import Protocol, runtime_checkable
 
-# Instruction kept terse and deterministic: the note is the vectorized field (spec §5),
-# so we want a compact 2-3 sentence concept summary, not a verbatim copy.
+# Upper bound on source characters fed to the note-writer (this summarizer and the M5
+# tagger's combined call). The note is a routing card, not a faithful compression of the
+# source (spec §7.3): an agent reads the note to decide whether to open the URL / re-fetch
+# the body, so a generous PREFIX is sufficient — an article's thesis, scope, and key
+# specifics live up front. This is deliberately larger than EMBED_INPUT_MAX_CHARS (the
+# embedder's hard ~2k-token budget): the LLM can read far more than the embedder, and 8k
+# would cut a long article short and starve the summary. Bounding it still caps LLM
+# cost/latency and decouples note quality from article length. The full source is never
+# lost — re-fetchable for `page`, FTS-indexed for clip/conversation/note (spec §11).
+SUMMARY_INPUT_MAX_CHARS = 16_000
+
+# The note is the vectorized field (spec §5) and a routing card (spec §7.3): it must let a
+# reader judge, from the note alone, whether to open the source. So we ask for what the
+# source is ABOUT and what a reader would FIND in it — not a verbatim recap.
 _SUMMARY_INSTRUCTION = (
-    "Summarize the following content into a neutral 2-3 sentence note capturing what it "
-    "is about. Output only the summary, no preamble.\n\nContent:\n"
+    "Write a neutral 2-3 sentence note describing what this source is about and what a "
+    "reader would find in it, so someone can judge from the note alone whether to open the "
+    "source for the full content. Output only the note, no preamble.\n\nContent:\n"
 )
 
 

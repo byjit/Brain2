@@ -114,21 +114,27 @@ async def test_delete_and_get_tags_round_trip_over_http():
 
 
 @pytest.mark.anyio
-async def test_tool_call_without_valid_bearer_is_rejected():
-    """M7: an MCP tool call with no/garbage Bearer must not resolve to a user."""
+async def test_invalid_bearer_is_challenged_with_401():
+    """An invalid/expired Bearer gets HTTP 401 + WWW-Authenticate (not a tool error).
+
+    This is the signal MCP clients (Claude web) rely on to start or refresh their OAuth
+    flow; a tool-level error inside a 200 response would never trigger re-auth.
+    """
     app = create_app(mcp_transport_security=_TEST_SECURITY)
 
     async with app.router.lifespan_context(app):
-        http_client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
-            headers={"Authorization": "Bearer br2_live_not_a_real_key"},
-        )
-        async with streamable_http_client(MCP_URL, http_client=http_client) as (read, write, _):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool("retrieve", {"query": "anything"})
-                # The unauthenticated call surfaces as a tool error, not a successful result.
-                assert result.isError
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            resp = await client.post(
+                "/connect/mcp",
+                json={},
+                headers={"Authorization": "Bearer br2_live_not_a_real_key"},
+            )
+            assert resp.status_code == 401
+            challenge = resp.headers["WWW-Authenticate"]
+            assert 'error="invalid_token"' in challenge
+            assert "oauth-protected-resource" in challenge
 
 
 @pytest.mark.anyio
@@ -136,12 +142,17 @@ async def test_mcp_metadata_endpoints():
     app = create_app(mcp_transport_security=_TEST_SECURITY)
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
-            # Test Protected Resource Metadata (RFC 9728)
-            resp = await client.get("/.well-known/oauth-protected-resource")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["resource"] == "http://testserver/connect/mcp"
-            assert data["authorization_servers"] == ["http://testserver"]
+            # Protected Resource Metadata (RFC 9728): served at the root well-known path
+            # AND the path-suffix variant clients derive from the resource URL.
+            for path in [
+                "/.well-known/oauth-protected-resource",
+                "/.well-known/oauth-protected-resource/connect/mcp",
+            ]:
+                resp = await client.get(path)
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["resource"] == "http://testserver/connect/mcp"
+                assert data["authorization_servers"] == ["http://testserver"]
 
             # Test Authorization Server Metadata (RFC 8414)
             for path in ["/.well-known/oauth-authorization-server", "/.well-known/openid-configuration"]:
@@ -151,7 +162,9 @@ async def test_mcp_metadata_endpoints():
                 assert data["issuer"] == "http://testserver"
                 assert data["authorization_endpoint"] == "http://testserver/oauth/authorize"
                 assert data["token_endpoint"] == "http://testserver/oauth/token"
+                assert data["registration_endpoint"] == "http://testserver/oauth/register"
                 assert "authorization_code" in data["grant_types_supported"]
+                assert "refresh_token" in data["grant_types_supported"]
 
 
 @pytest.mark.anyio
@@ -164,7 +177,11 @@ async def test_mcp_unauthorized_connection_challenges_401():
             assert resp.status_code == 401
             assert "WWW-Authenticate" in resp.headers
             challenge = resp.headers["WWW-Authenticate"]
-            assert 'resource_metadata="http://testserver/.well-known/oauth-protected-resource"' in challenge
+            # The challenge points at the RFC 9728 path-suffix metadata URL.
+            assert (
+                'resource_metadata="http://testserver/.well-known/oauth-protected-resource/connect/mcp"'
+                in challenge
+            )
 
             # Preflight OPTIONS request should pass through with 200 (not challenged)
             resp_options = await client.options(

@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { describe, it, expect } from "vitest";
-import { extractReadable, extractConversation } from "@/lib/extract";
+import { extractReadable, extractConversation, MAX_PAGE_CAPTURE_CHARS } from "@/lib/extract";
 
 // Readability needs a reasonable amount of prose to lock onto an article, so
 // we build a multi-paragraph <article> with distinctive sentences.
@@ -48,6 +48,15 @@ describe("extractReadable", () => {
     extractReadable(doc);
     expect(doc.body.innerHTML).toBe(before);
   });
+
+  it("caps an oversized page body at the prefix bound (body is discarded server-side)", () => {
+    // A huge article: many distinct words so Readability locks onto it as prose.
+    const huge = Array.from({ length: 40_000 }, (_, i) => `word${i}`).join(" ");
+    const doc = buildDoc(`<article><h1>Big</h1><p>${huge}</p></article>`);
+    const { textContent } = extractReadable(doc);
+    expect(textContent.length).toBeLessThanOrEqual(MAX_PAGE_CAPTURE_CHARS);
+    expect(textContent).toContain("word0"); // keeps the lead, where the summary signal lives
+  });
 });
 
 describe("extractConversation", () => {
@@ -59,5 +68,13 @@ describe("extractConversation", () => {
     expect(title).toBe("Chat");
     expect(textContent).toContain("hello there");
     expect(textContent).toContain("how can I help?");
+  });
+
+  it("does NOT cap conversation text — persisted content is not re-fetchable", () => {
+    const huge = Array.from({ length: 40_000 }, (_, i) => `turn${i}`).join(" ");
+    const doc = document.implementation.createHTMLDocument("Chat");
+    doc.body.innerHTML = `<div>${huge}</div>`;
+    const { textContent } = extractConversation(doc);
+    expect(textContent.length).toBeGreaterThan(MAX_PAGE_CAPTURE_CHARS);
   });
 });

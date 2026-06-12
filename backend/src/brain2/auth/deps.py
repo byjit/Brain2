@@ -78,7 +78,10 @@ def get_session_user(
             brain2_session, secret=settings.jwt_secret, expected_typ="session"
         )
         if user_id is not None:
-            return user_id
+            # Verify the user actually exists in the central users table
+            row = conn.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,)).fetchone()
+            if row is not None:
+                return user_id
     user_id = bearer.resolve_bearer(authorization, conn=conn, secret=settings.jwt_secret)
     if user_id is None:
         raise _UNAUTHENTICATED

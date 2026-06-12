@@ -3,8 +3,6 @@
 
 @import "tw-animate-css";
 
-@import "tw-animate-css";
-
 @import "shadcn/tailwind.css";
 
 @import "@fontsource-variable/nunito-sans";
@@ -128,15 +126,43 @@
 @layer base {
     * {
         @apply border-border outline-ring/50;
-        @apply border-border outline-ring/50;
     }
+
     body {
-        @apply bg-background text-foreground;
         @apply font-sans bg-background text-foreground;
     }
+
     html {
         scroll-behavior: smooth;
         @apply font-sans;
+    }
+
+    /* Style inline code inside prose */
+    .prose code {
+        background-color: var(--muted);
+        color: var(--foreground);
+        padding: 0.15rem 0.35rem;
+        border-radius: 0.25rem;
+        border: 1px solid oklch(from var(--border) l c h / 0.4);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.85em;
+        font-weight: 500;
+    }
+
+    /* Remove the default backticks added by tailwind typography */
+    .prose code::before,
+    .prose code::after {
+        content: "" !important;
+    }
+
+    /* Reset styles for code blocks (pre code) */
+    .prose pre code {
+        background-color: transparent !important;
+        border: none !important;
+        padding: 0 !important;
+        color: inherit !important;
+        font-size: inherit !important;
+        font-weight: inherit !important;
     }
 }
 
@@ -145,6 +171,7 @@
         opacity: 0;
         transform: translateY(20px);
     }
+
     100% {
         opacity: 1;
         transform: translateY(0);
@@ -155,9 +182,11 @@
     0% {
         background-position: 0% 50%;
     }
+
     50% {
         background-position: 100% 50%;
     }
+
     100% {
         background-position: 0% 50%;
     }
@@ -173,9 +202,12 @@
 }
 
 @keyframes blink {
-    0%, 100% {
+
+    0%,
+    100% {
         opacity: 1;
     }
+
     50% {
         opacity: 0;
     }
@@ -184,4 +216,3 @@
 .animate-blink {
     animation: blink 1s step-end infinite;
 }
-

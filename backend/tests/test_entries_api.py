@@ -13,13 +13,13 @@ def test_save_new_page_returns_saved_status(client):
     assert data["id"]
 
 
-def test_page_content_is_not_persisted(client):
+def test_page_content_is_temporarily_saved(client):
     r = _post(client, url="https://example.com/p", captured_text="long body text", type="page")
     entry_id = r.json()["id"]
     # Inspect via a second request path is not available; query DB through a note round-trip.
     # Instead re-save same URL to confirm dedup, then check content via the entries table.
     row = _fetch_entry(client, entry_id)
-    assert row["content"] is None
+    assert row["content"] == "long body text"
 
 
 def test_note_content_is_persisted(client):
@@ -183,6 +183,26 @@ def _fetch_entry(client, entry_id):
     conn = next(gen)
     try:
         row = conn.execute("select * from entries where id = ?", (entry_id,)).fetchone()
-        return dict(row)
+        return dict(row) if row else None
     finally:
         gen.close()
+
+
+def test_delete_entry_endpoint_success(client):
+    r = _post(client, url="https://example.com/delete-me", title="Delete Me", type="page")
+    entry_id = r.json()["id"]
+
+    assert _fetch_entry(client, entry_id) is not None
+
+    del_r = client.delete(f"/entries/{entry_id}")
+    assert del_r.status_code == 200
+    assert del_r.json() == {"deleted": True}
+
+    assert _fetch_entry(client, entry_id) is None
+
+
+def test_delete_entry_endpoint_not_found(client):
+    del_r = client.delete("/entries/non-existent-id")
+    assert del_r.status_code == 200
+    assert del_r.json() == {"deleted": False}
+

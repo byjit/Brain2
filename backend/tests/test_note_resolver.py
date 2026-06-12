@@ -7,7 +7,7 @@ All tests run offline using the fake providers.
 
 from brain2.services.note_resolver import ResolvedNote, resolve_note
 from brain2.services.providers.page_fetcher import FakePageFetcher, PageContent
-from brain2.services.providers.summarizer import FakeSummarizer
+from brain2.services.providers.summarizer import SUMMARY_INPUT_MAX_CHARS, FakeSummarizer
 
 
 def _entry(**overrides):
@@ -106,6 +106,22 @@ def test_long_clip_is_summarized():
     assert result.note.startswith("Summary:")
     assert len(summarizer.calls) == 1
     assert fetcher.calls == []
+
+
+def test_long_body_summarized_from_bounded_prefix():
+    """A body larger than the summary window is summarized from a bounded prefix (spec §7.3).
+
+    The note is a routing card and the full text stays re-fetchable / FTS-indexed, so the
+    summarizer never receives more than SUMMARY_INPUT_MAX_CHARS — capping LLM cost/latency.
+    """
+    huge_body = "word " * (SUMMARY_INPUT_MAX_CHARS)  # ~5x the window in chars
+    fetcher = FakePageFetcher(default=PageContent(body_text=huge_body, title="T"))
+    summarizer = FakeSummarizer()
+
+    resolve_note(_entry(), fetcher=fetcher, summarizer=summarizer)
+
+    assert len(summarizer.calls) == 1
+    assert len(summarizer.calls[0]) == SUMMARY_INPUT_MAX_CHARS
 
 
 def test_resolved_note_is_dataclass():

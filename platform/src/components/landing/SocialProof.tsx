@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { ArrowRight, Github } from "lucide-react";
 
 const testimonials = [
@@ -75,13 +76,14 @@ export const SocialProof = () => {
 			{/* Bottom CTA Block */}
 			<section className="flex flex-col items-center justify-center border-t border-border/40 pt-12 pb-6">
 				<div className="flex flex-wrap items-center justify-center gap-3 mb-4">
-					<a
-						className="inline-flex items-center whitespace-nowrap rounded-full font-medium bg-foreground text-background hover:opacity-85 transition-opacity gap-2 px-5 py-2.5 text-[15px]"
-						href="/login"
+					<Link
+						className="inline-flex items-center whitespace-nowrap rounded-full font-medium bg-foreground text-background hover:opacity-85 transition-opacity gap-2.5 px-5 py-2.5 text-[15px]"
+						to="/login"
 					>
 						<ArrowRight className="h-4 w-4" />
 						Get Started
-					</a>
+					</Link>
+
 					<a
 						className="inline-flex items-center whitespace-nowrap gap-2 rounded-full border border-border px-5 py-2.5 text-[15px] font-medium text-foreground hover:bg-muted/30 transition-colors"
 						href="https://github.com/byjit/Brain2"

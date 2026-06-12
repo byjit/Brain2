@@ -139,4 +139,20 @@ describe("api client", () => {
     await c.repair({ id: "1", note: "fixed", tags: ["a", "b"] });
     expect(JSON.parse(calls[0][1].body)).toMatchObject({ note: "fixed", tags: ["a", "b"] });
   });
+
+  it("deleteEntry() sends DELETE with Bearer and returns boolean status", async () => {
+    const calls: any[] = [];
+    const fetchImpl = async (url: any, init: any) => {
+      calls.push([String(url), init]);
+      return new Response(JSON.stringify({ deleted: true }), { status: 200 });
+    };
+    const c = createClient({ baseUrl: "http://b", getToken: async () => "t", fetchImpl });
+    const r = await c.deleteEntry("123");
+    expect(r).toBe(true);
+    expect(calls[0][0]).toBe("http://b/entries/123");
+    expect(calls[0][1].method).toBe("DELETE");
+    expect(calls[0][1].headers.Authorization).toBe("Bearer t");
+    expect(calls[0][1].headers["Content-Type"]).toBeUndefined();
+  });
 });
+

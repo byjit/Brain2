@@ -17,11 +17,13 @@ backend/
 │   ├── deps.py               # FastAPI deps: get_current_user (Bearer auth) + get_db
 │   ├── auth/                 # M7 hybrid auth (spec §12): central credential->user_id routing
 │   │   ├── store.py          # auth.db connection (WAL) + schema; mirrors db/connection.py
-│   │   ├── schema.sql        # users, api_keys, oauth_codes (central store, gitignored)
+│   │   ├── schema.sql        # users, api_keys, oauth_codes/clients/refresh_tokens (gitignored)
 │   │   ├── users.py          # upsert_by_google_sub + implicit signup ({user_id}.db creation)
 │   │   ├── api_keys.py       # Personal Access Tokens: SHA-256 hash, constant-time verify, revoke
 │   │   ├── jwt_service.py    # Brain2 access/session JWTs (HS256, exp + alg pinned) via pyjwt
 │   │   ├── oauth_codes.py    # single-use, short-lived PKCE S256 authorization codes
+│   │   ├── oauth_clients.py  # Dynamic Client Registration (RFC 7591): public clients only
+│   │   ├── refresh_tokens.py # hashed-at-rest refresh tokens, rotated on every use
 │   │   ├── bearer.py         # the one credential->user_id router (API key OR JWT)
 │   │   ├── deps.py           # get_auth_db + get_session_user (session cookie OR Bearer)
 │   │   └── providers/identity.py # IdentityProvider Protocol; Google + Fake + factory
@@ -77,7 +79,7 @@ backend/
   `cookie_secure`. None are ever logged or returned.
   Also holds the worker knobs: `gemini_summary_model` (default `gemini-3.5-flash` — the
   current Flash model per the gemini-api-dev skill, used for both summarization and the M5
-  combined tagging call; the M4 embedding model is `gemini-embedding-001` at 768-dim) and
+  combined tagging call; the M4 embedding model is `gemini-embedding-2` at 768-dim) and
   `worker_max_attempts` (retry ceiling, default 3). The M5 auto-tagging knobs are the
   spec's deliberate anti-fragmentation choices and the ONLY tuning surface (spec §15):
   `canonicalize_threshold` (default 0.90 — bias to under-merge live), `tags_per_entry_max`
@@ -198,7 +200,7 @@ backend/
     real `GeminiSummarizer` uses the **google-genai** SDK + Gemini Flash, fake is
     deterministic and records calls); `embedder.Embedder` (768-dim note/query vector; real
     `GeminiEmbedder` uses the **google-genai** SDK `embed_content` with
-    `gemini-embedding-001` at `output_dimensionality=768`, fake is a deterministic hashed
+    `gemini-embedding-2` at `output_dimensionality=768`, fake is a deterministic hashed
     bag-of-words unit vector — *similarity-meaningful* so token overlap raises cosine and
     KNN/RRF ordering is genuinely testable offline); `page_fetcher.PageFetcher` returns a
     `PageContent` (`body_text`, `og_description`, `meta_description`, `title`); real
@@ -341,8 +343,12 @@ backend/
   timeout, idempotent schema). Modules, each single-responsibility:
   - `store.open_auth_db` + `schema.sql` — `users(user_id PK nanoid, google_sub UNIQUE,
     email, created_at)`, `api_keys(id, user_id FK, token_hash UNIQUE, prefix, name,
-    created_at, last_used_at, revoked_at)`, and `oauth_codes(code PK, user_id, code_challenge,
-    method, redirect_uri, expires_at, consumed_at)`.
+    created_at, last_used_at, revoked_at)`, `oauth_codes(code PK, user_id, code_challenge,
+    method, redirect_uri, client_id, expires_at, consumed_at)`, `oauth_clients(client_id PK,
+    client_name, redirect_uris JSON, created_at)`, and `oauth_refresh_tokens(id PK, user_id,
+    client_id, token_hash UNIQUE, expires_at, created_at, rotated_at)`. `store._migrate`
+    ALTERs columns added after a table first shipped (idempotent, pragma-guarded), since
+    `CREATE TABLE IF NOT EXISTS` never alters an existing dev auth.db.
   - `api_keys` — Personal Access Tokens for CLI/Desktop. Generates `br2_live_…` via
     `secrets.token_urlsafe`, returns the raw key ONCE, stores only its SHA-256 hash + a
     short non-secret display prefix; `verify_key` hashes the presented key, constant-time
@@ -352,10 +358,20 @@ backend/
     carrying `sub`=user_id + `exp`. `verify_token` PINS the algorithm (rejects `alg:none`/
     confusion) and REQUIRES `exp` + `sub`, returning the `sub` or None.
   - `oauth_codes` — OAuth 2.1 authorization codes bound to the S256 `code_challenge` +
-    `redirect_uri`. `issue_code` mints a single-use, short-lived code; `consume_code`
-    verifies (unknown/consumed/expired/redirect-mismatch/wrong-verifier all → None) then
-    atomically marks consumed (guarded on `consumed_at IS NULL`) so a replay loses. Only
-    S256 is accepted (`plain` rejected). `verify_pkce_s256` is constant-time.
+    `redirect_uri` + issuing `client_id`. `issue_code` mints a single-use, short-lived code;
+    `consume_code` verifies (unknown/consumed/expired/redirect-mismatch/client-mismatch/
+    wrong-verifier all → None) then atomically marks consumed (guarded on `consumed_at IS
+    NULL`) so a replay loses. Only S256 is accepted (`plain` rejected); the client_id match
+    is enforced only when BOTH sides name one (public PKCE clients may omit it).
+    `verify_pkce_s256` is constant-time.
+  - `oauth_clients` — Dynamic Client Registration (RFC 7591) for MCP clients (Claude web
+    custom connectors). PUBLIC clients only: no secret is ever issued; `redirect_uris` must
+    be https (or http on loopback, RFC 8252 §7.3) and are matched EXACTLY at authorize time.
+  - `refresh_tokens` — mirrors `api_keys`' at-rest model (raw `br2_rt_…` returned once,
+    SHA-256 hash stored, constant-time verify) and ROTATES on every use: `consume` retires
+    the presented token (atomic, guarded on `rotated_at IS NULL`) and issues a replacement,
+    so a replayed/stolen refresh token is rejected. Bound to the issuing `client_id` under
+    the same lenient both-sides-present rule.
   - `bearer.resolve_bearer` — THE one place the two credential types converge: parse the
     `Bearer` value; if it has the `br2_live_` prefix validate against `api_keys`, else
     validate as a Brain2 JWT; return the `user_id` (caller opens `{user_id}.db`) or None.
@@ -378,13 +394,33 @@ backend/
     exchange the code via the identity provider, `upsert_by_google_sub` (implicit signup),
     set the httpOnly + Secure + SameSite=Lax session cookie, redirect to the dashboard;
     `GET /auth/me` (current user); `POST /auth/logout` (clear cookie).
-  - OAuth 2.1 + PKCE (web MCP clients + extension), authorization_code + S256 ONLY (YAGNI —
-    no refresh rotation / extra grants): `GET /oauth/authorize` requires a logged-in Google
-    session, validates `redirect_uri` against the EXACT config allowlist (no substring/open
-    redirect), requires `response_type=code` + S256 `code_challenge` + `state`, issues a
-    PKCE-bound single-use code, redirects back with `code` + echoed `state`; `POST
-    /oauth/token` consumes the code, verifies the `code_verifier`, and issues a short-lived
-    Brain2 access token (`{access_token, token_type:Bearer, expires_in}`).
+  - OAuth 2.1 + PKCE (web MCP clients + extension): `GET /oauth/authorize` requires a
+    logged-in Google session, validates `redirect_uri` EXACTLY — against the registered
+    client's `redirect_uris` when `client_id` was issued by `/oauth/register`, else against
+    the static config allowlist (no substring/open redirect either way) — and requires
+    `response_type=code` + S256 `code_challenge` + `state`. Then the flows split:
+    **static-allowlist clients** (the extension — operator-configured, first-party) get the
+    PKCE-bound single-use code via immediate redirect; **DCR-registered clients** get a
+    consent page naming the client + redirect host, and the code is only issued by `POST
+    /oauth/authorize` after the user clicks Allow (Deny redirects with
+    `error=access_denied`). The consent POST carries a short-lived purpose-pinned JWT bound
+    to (user, client_id, redirect_uri) — a token minted for another user or client never
+    verifies, so a forged/replayed POST cannot mint a code. This consent gate is what makes
+    OPEN dynamic registration safe: without it, an attacker-registered client would receive
+    codes via silent redirect (one-click account takeover). `POST /oauth/token` supports TWO
+    grants, both returning `{access_token, token_type:Bearer, expires_in, refresh_token}`:
+    `authorization_code` (consumes the code, verifies `code_verifier` + STRICT client
+    binding — a code bound to a client_id cannot be redeemed without presenting it) and
+    `refresh_token` (rotates the presented token; replay → `invalid_grant`; same strict
+    client binding). Errors use the RFC 6749 `{"error": …}` shape with `Cache-Control: no-store`.
+  - `POST /oauth/register` — Dynamic Client Registration (RFC 7591) so MCP clients like
+    Claude web self-register (no manual allowlist edit). Public clients only
+    (`token_endpoint_auth_method` must be `none`); bad redirect URIs → `invalid_redirect_uri`.
+  - OAuth discovery for MCP clients: `/.well-known/oauth-authorization-server` (+
+    `openid-configuration` alias) advertises authorize/token/register endpoints, both
+    grants, and S256; `/.well-known/oauth-protected-resource` is served at the root AND
+    the RFC 9728 path-suffix variant (`…/oauth-protected-resource/connect/mcp`) that
+    clients derive from the resource URL.
   - `/settings/tokens` (session/Bearer authed): `POST {name}` → `{id, api_key (once), prefix}`;
     `GET` → list without the secret; `DELETE /{id}` → owner-scoped revoke. Backs the
     dashboard token UI.
@@ -400,7 +436,11 @@ protection (Host/Origin allow-list) is left on by default for production; `creat
 `build_mcp_server` accept a `transport_security` override so in-process ASGI tests can relax
 it. Auth (M7, spec §12) resolves the request's `Bearer` credential — a Personal Access Token
 (API key) or a Brain2 access token (OAuth 2.1 + PKCE / session JWT) — to a `user_id` via the
-central `auth.db`, rejecting unauthenticated calls.
+central `auth.db`, rejecting unauthenticated calls. A connection-level middleware in
+`main.py` challenges BOTH a missing header and an invalid/expired credential with HTTP 401 +
+`WWW-Authenticate` pointing at the RFC 9728 path-suffix metadata URL — the signal MCP
+clients (Claude web) need to start or refresh their OAuth flow; tool-level `PermissionError`
+remains as defense-in-depth behind it.
 
 ## Conventions
 

@@ -49,12 +49,12 @@ export const Navbar = () => {
 				{/* Actions (Right) */}
 				<div className="ml-auto flex min-w-0 items-center justify-end gap-3 min-[940px]:ml-0">
 					<div className="hidden min-[940px]:block">
-						<a
+						<Link
 							className="inline-flex items-center whitespace-nowrap rounded-full font-medium bg-foreground text-background hover:opacity-85 transition-opacity gap-2 px-4 py-1.5 text-xs"
-							href="/login"
+							to="/login"
 						>
 							Get Extension
-						</a>
+						</Link>
 					</div>
 
 					{/* Theme Switcher Button */}
@@ -108,13 +108,13 @@ export const Navbar = () => {
 							)
 						)}
 						<div className="pt-2">
-							<a
+							<Link
 								className="inline-flex w-full items-center justify-center whitespace-nowrap rounded-full font-medium bg-foreground text-background hover:opacity-85 transition-opacity gap-2 px-4 py-2 text-xs"
-								href="/login"
 								onClick={() => setIsOpen(false)}
+								to="/login"
 							>
 								Get Started
-							</a>
+							</Link>
 						</div>
 					</div>
 				</nav>

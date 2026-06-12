@@ -71,7 +71,8 @@ GOOGLE_CLIENT_SECRET=...
 JWT_SECRET=<64+ chars of high entropy>           # REQUIRED: rotate the dev default out
 COOKIE_SECURE=true                               # session cookie only over HTTPS
 DASHBOARD_URL=https://app.brain2.example         # post-login redirect target
-ACCESS_TOKEN_TTL=3600                            # 1h access tokens (no refresh tokens by design)
+ACCESS_TOKEN_TTL=3600                            # 1h access tokens
+REFRESH_TOKEN_TTL=2592000                        # 30d rotating refresh tokens (MCP clients)
 SESSION_TTL=1209600                              # 14d dashboard session
 
 # Exact-match OAuth redirect allowlist (comma-separated, no substrings/open redirects)
@@ -190,12 +191,29 @@ once) and configure their MCP client against the hosted endpoint:
 ```
 
 ### 5b. Web Clients / Claude Web (OAuth 2.1)
-Our server implements the MCP OAuth 2.1 authorization discovery specification (RFC 9728 and RFC 8414). To connect a web-based client that natively supports this (such as Claude Web custom connectors):
-1. Add the web client's redirect callback URI (e.g. `https://claude.ai/api/mcp/auth_callback` for Claude Web) to the `OAUTH_REDIRECT_URIS` environment variable on your hosted backend.
-2. In the web client's settings, add a custom connector pointing to the MCP URL: `https://api.brain2.example/connect/mcp`.
-3. The client will automatically negotiate authorization via the discovery endpoints (`/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server` / `/.well-known/openid-configuration`), launching a browser consent screen where the user logs in and connects.
+Our server implements the full MCP OAuth 2.1 authorization stack: discovery (RFC 9728
+Protected Resource Metadata at the root **and** path-suffix well-known URLs, RFC 8414 AS
+metadata), Dynamic Client Registration (RFC 7591), PKCE S256, and a rotating
+`refresh_token` grant. To connect a web-based client that natively supports this (such as
+Claude Web custom connectors):
 
-Tools: `save`, `retrieve`, `delete`, `get_tags`.
+1. In the web client's settings, add a custom connector pointing to the MCP URL: `https://api.brain2.example/connect/mcp`.
+2. The client receives a `401` + `WWW-Authenticate` challenge, discovers the metadata
+   endpoints, **registers itself** via `POST /oauth/register` (no manual
+   `OAUTH_REDIRECT_URIS` edit needed for DCR-capable clients), and opens the browser flow:
+   Google sign-in, then **Brain2's consent screen** naming the client and its redirect
+   host — the user must click **Allow** before any code is issued (registration is open,
+   so codes are never issued to registered clients via silent redirect).
+3. Access tokens expire after 1h; the client refreshes silently via the `refresh_token`
+   grant (tokens rotate on every use; a replayed refresh token is rejected). Because
+   identities are keyed on the Google `sub`, signing in with the same Google account used
+   for the extension/dashboard connects the MCP client to the **same** user data.
+
+Clients **without** DCR support still work: add their callback URI (e.g.
+`https://chat.openai.com/aip/g-.../oauth/callback`) to `OAUTH_REDIRECT_URIS` and have them
+use any `client_id` — unregistered client ids validate against that static allowlist.
+
+Tools: `save`, `retrieve`, `list`, `delete`, `get_tags`.
 
 
 ---
@@ -235,9 +253,14 @@ After deploy:
 
 The backend went through a dedicated security review at M7 (PKCE S256, JWT alg-pinning,
 exact redirect allowlist, login-CSRF nonce, Google `id_token` aud/iss binding, hash-only
-API keys, `email_verified` enforcement) — see `status.md`. The one conscious v1 deferral:
-a single first-party OAuth client (no client allowlist / consent screen for third-party
-MCP clients).
+API keys, `email_verified` enforcement) — see `status.md`. Third-party MCP clients now
+self-register via RFC 7591 DCR (public clients only — no secrets issued; redirect URIs
+must be https or loopback-http and are matched exactly; codes and refresh tokens are
+STRICTLY bound to the issuing `client_id`; refresh tokens are hashed at rest and rotate
+on every use). Because registration is open, every DCR-registered client goes through an
+explicit per-client **consent screen** at `/oauth/authorize` — codes are issued to them
+only after the user clicks Allow, never via silent redirect. Only the operator-configured
+static-allowlist clients (the extension) skip consent.
 
 ---
 

@@ -42,7 +42,7 @@ export interface ClientConfig {
 }
 
 interface RequestOptions {
-  method: "GET" | "POST" | "PATCH";
+  method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   /** When present, serialized as a JSON body with the matching Content-Type header. */
   json?: unknown;
@@ -52,6 +52,7 @@ export interface Brain2ApiClient {
   save: (req: SaveRequest) => Promise<SaveResult>;
   getFailed: () => Promise<FailedList>;
   repair: (input: { id: string; note: string; tags?: string[] }) => Promise<void>;
+  deleteEntry: (id: string) => Promise<boolean>;
 }
 
 // PATCH body contract: note is required (min 1 char), tags optional. Mirrors the
@@ -138,6 +139,19 @@ export const createClient = ({
         json: { note, ...(tags ? { tags } : {}) },
       });
       // Backend returns the full updated entry; we only need 2xx, so resolve void.
+    },
+
+    deleteEntry: async (id) => {
+      const res = await request({
+        method: "DELETE",
+        path: `/entries/${encodeURIComponent(id)}`,
+      });
+      const data = await parseJson(
+        res,
+        z.object({ deleted: z.boolean() }),
+        `DELETE /entries/${id}`
+      );
+      return data.deleted;
     },
   };
 };

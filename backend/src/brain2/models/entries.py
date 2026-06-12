@@ -131,3 +131,10 @@ class FailedEntriesResponse(BaseModel):
 
     total: int = Field(description="Total failed entries for the current user")
     entries: list[FailedEntry]
+
+
+class DeleteEntryResponse(BaseModel):
+    """Result of a delete operation."""
+
+    deleted: bool = Field(description="True if the entry existed and was removed, else False")
+

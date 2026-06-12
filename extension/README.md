@@ -10,8 +10,7 @@ The popup offers three capture modes plus a repair list:
 
 1. **Save page** (the prominent action) — captures the active tab. Chat domains
    (see [`lib/chat-domains.ts`](lib/chat-domains.ts)) are saved as a `conversation`;
-   everything else as a `page`. A secondary, collapsible "save a different URL" lets
-   you ingest an arbitrary URL.
+   everything else as a `page`.
 2. **Select content** — an element picker overlay. Hover to highlight, expand/contract
    the selection by walking the DOM, then review the HTML→Markdown result before saving.
    `Escape` cancels.

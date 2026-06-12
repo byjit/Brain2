@@ -12,11 +12,24 @@ import pytest
 
 from brain2.db.connection import open_user_db
 from brain2.services.canonicalize import TagCandidate, canonicalize_candidates
-from brain2.services.providers.embedder import FakeEmbedder
+from brain2.services.providers.embedder import EMBED_INPUT_MAX_CHARS, FakeEmbedder
+from brain2.services.providers.summarizer import SUMMARY_INPUT_MAX_CHARS
 from brain2.services.providers.tagger import FakeTagger, TagProposal
 from brain2.services.structured_tags import FakeStructuredTagSource
 from brain2.services.tags_vector import index_tag_vector
 from brain2.services.tagging import apply_tags
+
+
+class _RecordingEmbedder(FakeEmbedder):
+    """FakeEmbedder that records the text it was asked to embed (input-bound assertions)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.inputs: list[str] = []
+
+    def embed(self, text: str) -> list[float]:
+        self.inputs.append(text)
+        return super().embed(text)
 
 
 @pytest.fixture
@@ -62,6 +75,31 @@ def test_exactly_one_tagger_call_per_entry(conn):
     )
 
     assert len(tagger.calls) == 1  # spec: exactly one LLM call per entry
+
+
+def test_oversized_basis_bounds_embedder_and_tagger_separately(conn):
+    """A huge basis is prefix-bounded — tightly for the embedder, generously for the note.
+
+    The embedder has a hard ~2k-token budget (EMBED_INPUT_MAX_CHARS) while the note-writer
+    can read more (SUMMARY_INPUT_MAX_CHARS), so a long article still yields a meaningful
+    routing-card note instead of being starved at 8k (spec §7.3).
+    """
+    _insert_entry(conn, "e1", note="")
+    embedder = _RecordingEmbedder()
+    tagger = FakeTagger()
+    huge_basis = "word " * 20_000  # ~100k chars, well over both caps
+
+    apply_tags(
+        conn, "e1", basis_text=huge_basis, needs_summary=True,
+        source=FakeStructuredTagSource(), tagger=tagger, embedder=embedder,
+        threshold=0.90, max_tags=5, nearest_limit=10,
+    )
+
+    # The basis embedding (first embed call) is bounded to the embedder's hard limit.
+    assert len(embedder.inputs[0]) == EMBED_INPUT_MAX_CHARS
+    # The note-writer reads a larger prefix — strictly more than the embedder gets.
+    assert len(tagger.calls[0].basis_text) == SUMMARY_INPUT_MAX_CHARS
+    assert SUMMARY_INPUT_MAX_CHARS > EMBED_INPUT_MAX_CHARS
 
 
 def test_persists_edges_counts_and_tags_text(conn):
