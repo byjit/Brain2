@@ -8,7 +8,7 @@ Save content from anywhere, and bring it as context to every AI agents you use.
 
 ## Repository Structure
 
-- [extension/](/extension): Chrome capture extension (WXT + React + TypeScript + Tailwind CSS). Popup with three capture modes (save page → chat domains become `conversation`; element picker; custom note) plus a "needs attention" repair list. Thin popup UI; the background service worker owns all network/auth/state; content scripts (`entrypoints/`) do DOM extraction (Readability) and the Shadow-DOM element picker (Turndown HTML→Markdown). Shared contracts in `services/` (`auth` PKCE OAuth, `api` client, `capture` stores/types, `messaging`, `storage`). See [extension/README.md](/extension/README.md).
+- [extension/](/extension): Chrome capture extension (WXT + React + TypeScript + Tailwind CSS). Popup with three capture modes (save page → chat domains become `conversation`; element picker; custom note) and a link to a separate "needs attention" repair tab page. Thin popup UI; the background service worker owns all network/auth/state; content scripts (`entrypoints/`) do DOM extraction (Readability) and the Shadow-DOM element picker (Turndown HTML→Markdown). Shared contracts in `services/` (`auth` PKCE OAuth, `api` client, `capture` stores/types, `messaging`, `storage`). See [extension/README.md](/extension/README.md).
 - [backend/](/backend): Python + FastAPI backend (per-user SQLite memory store). Managed with **uv**, Python pinned to **3.12**. See [backend/ARCHITECTURE.md](/backend/ARCHITECTURE.md) for layout and conventions.
 - [platform/](/platform): Web platform and user dashboard built using React, TypeScript, Vite, and TanStack Router.
 - [mcp/](/mcp): Directory for Model Context Protocol (MCP) servers.

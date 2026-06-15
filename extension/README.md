@@ -6,7 +6,7 @@ anything that failed to ingest. Built on WXT 0.20 (MV3) + React 19 + Tailwind 4.
 
 ## What it does
 
-The popup offers three capture modes plus a repair list:
+The popup offers three capture modes:
 
 1. **Save page** (the prominent action) — captures the active tab. Chat domains
    (see [`lib/chat-domains.ts`](lib/chat-domains.ts)) are saved as a `conversation`;
@@ -15,8 +15,8 @@ The popup offers three capture modes plus a repair list:
    the selection by walking the DOM, then review the HTML→Markdown result before saving.
    `Escape` cancels.
 3. **Custom note** — a free-text note.
-4. **Needs Attention** — lists entries that failed enrichment on the backend and lets
-   you trigger a repair. A toolbar badge surfaces the pending count.
+
+An **Attention** link next to the Dashboard link opens a separate tab containing the **Needs Attention** list, which displays items that failed enrichment on the backend and lets you repair or forget them. A toolbar badge surfaces the pending count.
 
 Saves are fire-and-forget: a toast (sonner) confirms, and the popup auto-closes.
 
@@ -24,8 +24,8 @@ Saves are fire-and-forget: a toast (sonner) confirms, and the popup auto-closes.
 
 The extension keeps responsibilities cleanly separated:
 
-- **Popup** (`entrypoints/popup/`) — thin UI only. Renders the three modes and the
-  repair list; it owns no network or auth logic. It reads/writes shared stores and
+- **Popup** (`entrypoints/popup/`) — thin UI only. Renders the three modes and links to the
+  Needs Attention page; it owns no network or auth logic. It reads/writes shared stores and
   sends messages to the background worker.
 - **Background service worker** (`entrypoints/background.ts`) — owns **all** network,
   auth, and state. It orchestrates saves (injects the extractor, calls the API client),
@@ -107,7 +107,7 @@ Load the unpacked build (`.output/chrome-mv3/`) in Chrome, then walk through:
 - [ ] **Element picker** — select content, expand/contract, review Markdown, save.
 - [ ] **Custom note** — save a free-text note.
 - [ ] **Force a failure** (e.g. backend enrichment error) → badge count appears →
-      open **Needs Attention** → repair → badge clears.
+      open **Needs Attention** page → repair or forget → badge clears.
 
 ### Blocking prerequisite (end-to-end sign-in)
 
