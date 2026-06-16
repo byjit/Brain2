@@ -43,8 +43,9 @@ eggs/
 .eggs/
 lib/
 lib64/
-# But track the extension's lib/ source directory (JS, not Python artifacts)
+# But track the front-end lib/ source directories (JS/TS, not Python artifacts)
 !extension/lib/
+!platform/src/lib/
 parts/
 sdist/
 var/
@@ -80,3 +81,6 @@ status.data
 *.swo
 
 .agents/skills/tech-blog-writer/
+*.env
+notes/
+run

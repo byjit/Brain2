@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, Download, DownloadCloud, Github } from "lucide-react";
+import { DownloadCloud } from "lucide-react";
 import { LogoIcon } from "@/components/Logo";
 import { APP_NAME } from "@/lib/constant";
 

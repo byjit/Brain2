@@ -7,7 +7,7 @@ export const Navbar = () => {
 	const [isOpen, setIsOpen] = useState(false);
 	const { theme, setTheme } = useTheme();
 
-	const navItems = [
+	const navItems: { name: string; to: string; href?: string }[] = [
 		{ name: "Home", to: "/" },
 		{ name: "Blog", to: "/blogs" },
 		{ name: "Changelog", to: "/changelog" },
