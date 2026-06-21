@@ -46,7 +46,7 @@ The founder is the ICP. Scratch-your-own-itch. Highest-confidence demand signal 
 
 An open-source personal memory store with two ways in and one way out everywhere.
 
-- **Save once** - Chrome extension (one click) or from inside any agent conversation. Saving is the only thing the user does. Tagging, summarizing, and indexing all happen automatically in the background. The user stays in their flow.
+- **Save once** - Chrome/Edge extension (one click) or from inside any agent conversation. Saving is the only thing the user does. Tagging, summarizing, and indexing all happen automatically in the background. The user stays in their flow.
 - **Recall anywhere** - every AI tool reads the same store over MCP; ask your agent, it answers from what you saved.
 
 The core promise: **whatever is saved is accessible by any AI that connects the MCP.** All your context, available to all your AI tools, with zero filing effort.
@@ -59,7 +59,7 @@ The core promise: **whatever is saved is accessible by any AI that connects the 
 
 | Feature                         | Notes                                                                                                                                                                                                                         |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Chrome extension save           | Popup-first, three capture modes - save page, element picker, custom note (see §8). No keyboard shortcuts. DOM scraped client-side                                                                                            |
+| Chrome/Edge extension save      | Popup-first, three capture modes - save page, element picker, custom note (see §8). No keyboard shortcuts. DOM scraped client-side. Chromium build, ships to both the Chrome Web Store and Edge Add-ons                       |
 | Conditional content persistence | Keep raw captured text only when it can't be re-fetched from a URL (clips, notes, conversations). Discard scraped body for `page` saves - the URL is stored and an agent can re-fetch it (see §7, §9)                         |
 | LLM-generated note              | Gemini Flash summarizes captured content into 2-3 sentences; stored as the `note` field; user-editable; this is what gets vectorized. Falls back to OG/meta description, then title, when the body can't be parsed (see §7.3) |
 | Automatic tagging               | No manual tagging. Tags are generated in the background, grounded in the user's existing tags, then canonicalized before write (see §7.2). Tags remain viewable and editable, never required                                  |
@@ -256,7 +256,7 @@ The note-writer and embedder caps are **deliberately decoupled**: the embedder's
 
 ---
 
-## 8. Capture UX (Chrome Extension)
+## 8. Capture UX (Chrome / Edge Extension)
 
 The extension is the only capture surface in v1, and the only place the user actively does anything. The design rule, top to bottom: **friction is proportional to how likely a capture is to be wrong.** High-confidence captures commit instantly; error-prone ones get a quick review; everything downstream (tags, summary, indexing) is invisible. There are no keyboard shortcuts - capture always begins from the toolbar popup, so the entry point is always discoverable.
 

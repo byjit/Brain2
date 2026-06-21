@@ -1,7 +1,7 @@
 # Brain2 — Production Setup & Deployment
 
 How to deploy Brain2 for real use: the hosted **backend** (REST + MCP + async worker),
-the **platform** dashboard, the published **Chrome extension**, and MCP-client wiring —
+the **platform** dashboard, the published **Chrome / Edge extension**, and MCP-client wiring —
 plus the security, OAuth, and backup details that matter once it leaves localhost.
 
 > Behavior reference: [`spec.md`](./spec.md). Build state & open items: [`status.md`](./status.md).
@@ -36,7 +36,8 @@ not designed for horizontally-scaled stateless replicas writing the same files.
 - TLS for both origins (managed certs or a reverse proxy such as Caddy/Nginx/Traefik).
 - A **Gemini API key** (live summarization, embeddings, auto-tagging).
 - A **Google Cloud OAuth 2.0 Client** (Web application) configured for the prod origins.
-- The extension's **published** redirect URL (depends on the final extension ID).
+- The extension's **published** redirect URL(s) — one per store listing, since each
+  store assigns its own extension ID (Chrome Web Store and, if shipping to Edge, Edge Add-ons).
 
 ---
 
@@ -75,8 +76,9 @@ ACCESS_TOKEN_TTL=3600                            # 1h access tokens
 REFRESH_TOKEN_TTL=2592000                        # 30d rotating refresh tokens (MCP clients)
 SESSION_TTL=1209600                              # 14d dashboard session
 
-# Exact-match OAuth redirect allowlist (comma-separated, no substrings/open redirects)
-OAUTH_REDIRECT_URIS=https://<published-extension-id>.chromiumapp.org/
+# Exact-match OAuth redirect allowlist (comma-separated, no substrings/open redirects).
+# One entry per store listing — Chrome and Edge get separate published IDs.
+OAUTH_REDIRECT_URIS=https://<chrome-extension-id>.chromiumapp.org/,https://<edge-extension-id>.chromiumapp.org/
 
 # Storage — point at the PERSISTENT volume
 DATA_DIR=/data/users
@@ -112,9 +114,9 @@ In Google Cloud Console → **Credentials** → your **Web application** OAuth c
 - Configure the **OAuth consent screen** (app name, support email, scopes:
   `openid email profile`) and move it to **Published** for non-test users.
 
-The **extension** redirect (`https://<extension-id>.chromiumapp.org/`) goes in the
-backend's `OAUTH_REDIRECT_URIS`, **not** in Google's redirect list (it's a Brain2-issued
-authorization-code redirect, not a Google one).
+The **extension** redirect(s) (`https://<extension-id>.chromiumapp.org/`, one per store
+listing — Chrome and Edge) go in the backend's `OAUTH_REDIRECT_URIS`, **not** in Google's
+redirect list (they are Brain2-issued authorization-code redirects, not Google ones).
 
 > [!TIP]
 > **Interactive Sign-In Redirection:**
@@ -140,7 +142,7 @@ platform's build env; check `platform/`'s env handling — it uses `@t3-oss/env-
 
 ---
 
-## 4. Chrome extension: build & publish
+## 4. Chrome / Edge extension: build & publish
 
 ```bash
 cd extension
@@ -156,15 +158,32 @@ EOF
 
 pnpm compile && pnpm test                          # gate
 pnpm zip                                            # build + zip for the Chrome Web Store
+pnpm zip:edge                                       # build + zip for the Edge Add-ons store
 ```
 
-Publish via the [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole):
+The extension is Chromium-based, so the same source ships to both stores; only the build
+target (`zip` vs `zip:edge`) differs.
 
-1. Upload `extension/.output/*.zip`.
+**Chrome Web Store** — publish via the [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole):
+
+1. Upload `extension/.output/*-chrome.zip`.
 2. After the listing is created you get a **stable extension ID**. Its redirect URL is
    `https://<extension-id>.chromiumapp.org/` — add that **exact** string to the backend's
    `OAUTH_REDIRECT_URIS` and redeploy the backend.
-3. Submit for review. (For Firefox: `pnpm zip:firefox`.)
+3. Submit for review.
+
+**Edge Add-ons** — publish via the [Microsoft Partner Center](https://partner.microsoft.com/dashboard/microsoftedge):
+
+1. Upload `extension/.output/*-edge.zip`.
+2. The published Edge build gets its **own** store-assigned extension ID, hence its own
+   redirect URL `https://<edge-extension-id>.chromiumapp.org/`. Add that **exact** string
+   to `OAUTH_REDIRECT_URIS` **as well** (the allowlist holds both store redirects) and
+   redeploy the backend.
+3. Submit for review.
+
+> The `manifest.key` pinned in `wxt.config.ts` only fixes the ID for self-distributed /
+> unpacked builds; each store assigns its own ID to published listings, which is why both
+> store redirect URLs must be allowlisted. (For Firefox: `pnpm zip:firefox`.)
 
 > Keep the extension a thin capture client: all backend calls stay in the background SW,
 > which is CORS-exempt only because the prod API origin is in `host_permissions`. No

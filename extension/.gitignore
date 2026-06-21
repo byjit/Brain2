@@ -3,6 +3,11 @@
 .env.local
 .env.*.local
 
+# Extension signing key (pins the extension ID across Chrome/Edge dev builds).
+# The matching public key lives in wxt.config.ts (manifest.key) and is safe to
+# commit; the private key never is.
+*.pem
+
 # Logs
 logs
 *.log

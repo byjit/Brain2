@@ -106,10 +106,13 @@ All extension scripts are executed from the [extension/](/extension) directory:
 
 - `pnpm dev`: Start WXT development server (launches Chrome extension with hot reload)
 - `pnpm dev:firefox`: Start WXT development server targeting Firefox
+- `pnpm dev:edge`: Start WXT development server targeting Microsoft Edge (launches Edge with hot reload)
 - `pnpm build`: Build production extension bundle
 - `pnpm build:firefox`: Build production extension bundle for Firefox
+- `pnpm build:edge`: Build production extension bundle for Microsoft Edge (`.output/edge-mv3/`)
 - `pnpm zip`: Build and zip Chrome extension for distribution
 - `pnpm zip:firefox`: Build and zip Firefox extension for distribution
+- `pnpm zip:edge`: Build and zip Microsoft Edge extension for the Edge Add-ons store
 - `pnpm compile`: Run TypeScript compilation check (`tsc --noEmit`)
 - `pnpm test`: Run tests with Vitest once
 - `pnpm test:watch`: Run tests with Vitest in watch mode

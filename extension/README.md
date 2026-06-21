@@ -94,12 +94,34 @@ Run from `extension/`:
 - `pnpm compile` — `tsc --noEmit` type check.
 - `pnpm test` — Vitest suite once (`pnpm test:watch` for watch mode).
 
-Firefox variants (`dev:firefox`, `build:firefox`, `zip:firefox`) exist but the
-extension is developed against Chrome.
+### Microsoft Edge
+
+Edge is Chromium-based, so the manifest, content scripts, and all runtime code are
+shared with Chrome — only the build target differs:
+
+- `pnpm dev:edge` — WXT dev server with hot reload, launching Edge (`.output/edge-mv3/`).
+- `pnpm build:edge` — production bundle (`.output/edge-mv3/`).
+- `pnpm zip:edge` — zipped bundle for the Edge Add-ons store.
+
+`pnpm dev:edge` launches the Edge binary configured in `web-ext.config.ts`; adjust the
+`edge` path there for your OS.
+
+**Stable extension ID.** `wxt.config.ts` pins `manifest.key` to a fixed public key, so
+Chrome and Edge dev/unpacked builds derive the **same** extension ID — and therefore the
+same OAuth redirect URL (`https://<id>.chromiumapp.org/`), which means only one redirect
+URI needs registering with the backend during development. The matching private key
+(`brain2-extension.pem`) is **gitignored** and must be kept as a developer/CI secret;
+regenerating or losing it changes the dev extension ID. Store-published builds get their
+own store-assigned IDs (see [`docs/production-setup.md`](../docs/production-setup.md)).
+
+Firefox variants (`dev:firefox`, `build:firefox`, `zip:firefox`) also exist, but the
+extension is primarily developed against Chrome/Edge.
 
 ## Manual QA / dogfood checklist
 
-Load the unpacked build (`.output/chrome-mv3/`) in Chrome, then walk through:
+Load the unpacked build in your browser — `.output/chrome-mv3/` in Chrome
+(`chrome://extensions` → Load unpacked) or `.output/edge-mv3/` in Edge
+(`edge://extensions` → Load unpacked) — then walk through:
 
 - [ ] **Sign in** with Google from the signed-out popup.
 - [ ] **Save page** on an ordinary site → ingested as a `page`.
@@ -117,6 +139,18 @@ The OAuth flow cannot complete end-to-end until the **M7 backend** is updated:
    than returning `401`.
 2. The extension's `chrome.identity.getRedirectURL()` value must be added to the
    backend `OAUTH_REDIRECT_URIS` allowlist.
+
+Because the extension ID is pinned (see [Microsoft Edge](#microsoft-edge) above), Chrome
+and Edge dev/unpacked builds share **one** redirect URL — register just that one to test
+signed-in flows in both browsers:
+
+| Build | Redirect URI to register |
+|-------|--------------------------|
+| Dev/unpacked (Chrome + Edge), pinned key | `https://<pinned-id>.chromiumapp.org/` (log `browser.identity.getRedirectURL()` once) |
+| Chrome Web Store (published) | `https://<cws-id>.chromiumapp.org/` |
+| Edge Add-ons (published) | `https://<edge-id>.chromiumapp.org/` |
+
+Published builds get store-assigned IDs, so register each store's redirect URL too.
 
 Until both ship, the signed-in capture paths can't be exercised against a live backend.
 The full extension test suite (102 tests) runs offline and is independent of this gate.

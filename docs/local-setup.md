@@ -23,7 +23,7 @@ the **backend** (FastAPI + per-user SQLite + MCP), the **platform** dashboard, t
 | Backend (REST + MCP) | [`backend/`](../backend) | `uv run uvicorn brain2.main:app --reload` | `http://localhost:8000` |
 | MCP endpoint | (mounted in backend) | — | `http://localhost:8000/connect/mcp` (streamable HTTP) |
 | Platform dashboard | [`platform/`](../platform) | `pnpm dev` | `http://localhost:3000` |
-| Chrome extension | [`extension/`](../extension) | `pnpm dev` | loads into a dev Chrome profile |
+| Chrome / Edge extension | [`extension/`](../extension) | `pnpm dev` / `pnpm dev:edge` | loads into a dev Chrome / Edge profile |
 
 Per-user databases are written to `data/users/{user_id}.db`; the central credential
 store is `data/auth.db`. Both are gitignored and created on first use.
@@ -35,7 +35,7 @@ store is `data/auth.db`. Both are gitignored and created on first use.
 - **Python 3.12** (pinned in `backend/.python-version`)
 - **[uv](https://docs.astral.sh/uv/)** — backend package manager
 - **Node.js 20+** and **pnpm** — platform & extension
-- **Google Chrome** (or a Chromium build) for the extension
+- **Google Chrome and/or Microsoft Edge** (both Chromium) for the extension
 - A **Google Cloud OAuth 2.0 Client** (Web application) for Google Sign-In — see
   [§5](#5-google-oauth-dev-configuration). Optional for backend-only / API-key testing.
 - A **Gemini API key** if you want real summarization/embeddings/auto-tagging. Without
@@ -131,7 +131,7 @@ is the platform's own milestone — see `status.md`.) Local login flow:
 
 ---
 
-## 4. Chrome extension
+## 4. Chrome / Edge extension
 
 ```bash
 cd extension
@@ -140,6 +140,7 @@ cp .env.example .env                              # then edit if your backend is
 pnpm compile                                       # tsc --noEmit
 pnpm test                                          # vitest (unit suite)
 pnpm dev                                            # launches a dev Chrome with the extension + HMR
+pnpm dev:edge                                       # same, but launches Microsoft Edge
 ```
 
 `extension/.env`:
@@ -149,9 +150,18 @@ VITE_BRAIN2_API_URL=http://localhost:8000
 VITE_BRAIN2_OAUTH_CLIENT_ID=brain2-extension
 ```
 
-`pnpm dev` opens a Chrome instance with the extension loaded. To load it into your normal
-Chrome instead, run `pnpm build` and load the unpacked `extension/.output/chrome-mv3/`
-directory via `chrome://extensions` → enable **Developer mode** → **Load unpacked**.
+`pnpm dev` opens a Chrome instance with the extension loaded (`pnpm dev:edge` for Edge —
+adjust the `edge` binary path in `extension/web-ext.config.ts` for your OS). To load it
+into your normal browser instead, run `pnpm build` / `pnpm build:edge` and load the
+unpacked output:
+
+- Chrome: `extension/.output/chrome-mv3/` via `chrome://extensions` → **Developer mode** → **Load unpacked**.
+- Edge: `extension/.output/edge-mv3/` via `edge://extensions` → **Developer mode** → **Load unpacked**.
+
+The extension ID is pinned (`manifest.key` in `wxt.config.ts`), so Chrome and Edge
+dev/unpacked builds share the **same** ID — and the same OAuth redirect URL
+(`https://<id>.chromiumapp.org/`), so only one entry is needed in `OAUTH_REDIRECT_URIS`
+(below) to test sign-in in both.
 
 > The extension only ever calls the backend **from its background service worker**
 > (CORS-exempt via `host_permissions`). The popup and content scripts talk to the
