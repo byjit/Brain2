@@ -6,6 +6,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Toaster } from "@/components/ui/sonner";
 import { authStore, needsAttentionStore } from "@/services/capture/stores";
 import { startPickerMsg, startNoteMsg } from "@/services/capture/messages";
+import { dashboardUrl } from "@/lib/config";
 import { SignIn } from "./SignIn";
 import { SavePage } from "./modes/SavePage";
 import { CustomNote } from "./modes/CustomNote";
@@ -70,7 +71,6 @@ function App() {
   }
 
   function openDashboard() {
-    const dashboardUrl = "http://localhost:3000/dashboard";
     browser.tabs.create({ url: dashboardUrl });
   }
 

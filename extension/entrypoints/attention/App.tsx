@@ -9,6 +9,7 @@ import { getFailedMsg, repairMsg, deleteEntryMsg } from "@/services/capture/mess
 import type { FailedEntry } from "@/services/capture/types";
 import { SignIn } from "../popup/SignIn";
 import { toast } from "sonner";
+import { dashboardUrl } from "@/lib/config";
 
 type AuthState = "loading" | "signed-in" | "signed-out";
 
@@ -82,7 +83,6 @@ function App() {
   }, [auth]);
 
   function openDashboard() {
-    const dashboardUrl = "http://localhost:3000/dashboard";
     browser.tabs.create({ url: dashboardUrl });
   }
 
