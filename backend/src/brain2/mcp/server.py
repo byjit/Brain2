@@ -19,10 +19,37 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
 
+from brain2.config import get_settings
 from brain2.mcp import auth, tools
 from brain2.models.entries import EntryType
 
 SERVER_NAME = "brain2_mcp"
+
+# Localhost Host/Origin patterns always kept in the allow-list so local dev and the MCP
+# Inspector keep working alongside the configured public hostnames.
+_LOCALHOST_HOSTS = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+_LOCALHOST_ORIGINS = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+# Remote MCP clients that POST to the endpoint through Caddy.
+_REMOTE_ORIGINS = ["https://claude.ai", "https://chat.openai.com"]
+
+
+def _transport_security_from_settings() -> TransportSecuritySettings | None:
+    """Build DNS-rebinding settings from config, or None to keep the SDK default.
+
+    Returns None when no public hosts are configured (dev): the SDK then auto-enables
+    localhost-only protection. In prod, ``MCP_ALLOWED_HOSTS`` lists the hostnames Caddy
+    forwards (e.g. ``brain2.useisbeta.com``) so remote clients aren't rejected with 421.
+    """
+    public_hosts = get_settings().mcp_allowed_hosts
+    if not public_hosts:
+        return None
+    # Accept each configured host both bare and with any port (Caddy may include one).
+    host_patterns = [pattern for host in public_hosts for pattern in (host, f"{host}:*")]
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=host_patterns + _LOCALHOST_HOSTS,
+        allowed_origins=_REMOTE_ORIGINS + _LOCALHOST_ORIGINS,
+    )
 
 
 class SaveOutput(BaseModel):
@@ -94,9 +121,13 @@ def _resolve_user(ctx: Context) -> str:
 def build_mcp_server(transport_security: TransportSecuritySettings | None = None) -> FastMCP:
     """Construct the FastMCP server with the save and retrieve tools registered.
 
-    ``transport_security`` overrides the SDK's default DNS-rebinding allow-list (kept
-    on for production); tests pass a permissive setting for in-process ASGI clients.
+    ``transport_security`` overrides the SDK's default DNS-rebinding allow-list; tests
+    pass a permissive setting for in-process ASGI clients. When omitted, the allow-list
+    is derived from ``MCP_ALLOWED_HOSTS`` so production hosts reached through Caddy are
+    accepted (otherwise the SDK allow-lists only localhost and rejects them with 421).
     """
+    if transport_security is None:
+        transport_security = _transport_security_from_settings()
     mcp = FastMCP(
         SERVER_NAME,
         stateless_http=True,

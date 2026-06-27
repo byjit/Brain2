@@ -109,6 +109,17 @@ class Settings(BaseSettings):
         default=True, description="Set Secure on the session cookie (disable for local http)"
     )
 
+    # --- MCP transport security (spec §10, §12) --------------------------------------
+    # Public hostnames Caddy forwards as the Host header to the MCP endpoint. The MCP
+    # SDK's DNS-rebinding protection only allow-lists localhost by default, so a remote
+    # client reaching us through Caddy (e.g. Claude web at brain2.useisbeta.com) is
+    # otherwise rejected with 421 Misdirected Request. Empty in dev (localhost is
+    # auto-allowed by the SDK); set to the prod hostname(s) via MCP_ALLOWED_HOSTS.
+    mcp_allowed_hosts: list[str] = Field(
+        default_factory=list,
+        description="Allowed Host header values for the MCP endpoint (prod public hostnames)",
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:
