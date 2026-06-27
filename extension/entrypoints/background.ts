@@ -184,6 +184,15 @@ function registerMessageHandlers(): void {
 }
 
 export default defineBackground(() => {
+  // webext-bridge rejects in-flight request promises with a bare `undefined`
+  // reason when a destination port disconnects mid-flight (e.g. the popup closing
+  // on blur while a `.send()` is pending). That surfaces as a harmless
+  // "Uncaught (in promise) undefined" in the SW console. Swallow ONLY the
+  // bare-`undefined` case so every real (typed Error) rejection still propagates.
+  self.addEventListener("unhandledrejection", (e) => {
+    if (e.reason === undefined) e.preventDefault();
+  });
+
   // Native lifecycle listeners are registered SYNCHRONOUSLY so the SW never misses a
   // wake event after a restart (svc-register-listeners-synchronously).
   browser.alarms.onAlarm.addListener((alarm) => {
