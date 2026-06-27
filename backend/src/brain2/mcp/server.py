@@ -234,13 +234,15 @@ def build_mcp_server(transport_security: TransportSecuritySettings | None = None
             list[str] | None,
             Field(description="Filter to entries carrying ANY of these tags (union); omit for all tags"),
         ] = None,
-        saved_after: Annotated[
+        window: Annotated[
             str | None,
-            Field(description="Inclusive lower bound on saved_at (ISO-8601 UTC, e.g. 2026-05-01T00:00:00Z)"),
-        ] = None,
-        saved_before: Annotated[
-            str | None,
-            Field(description="Inclusive upper bound on saved_at (ISO-8601 UTC)"),
+            Field(
+                description=(
+                    "Only return entries saved within this recent time window: an integer "
+                    "followed by a unit — m (minutes), h (hours), d (days), or w (weeks), "
+                    "e.g. '24h' for the last 24 hours or '3d' for the last 3 days. Omit for all time."
+                )
+            ),
         ] = None,
         limit: Annotated[int, Field(ge=1, le=100, description="Maximum entries (default 20)")] = 20,
         offset: Annotated[int, Field(ge=0, description="Entries to skip, for paging (default 0)")] = 0,
@@ -248,9 +250,9 @@ def build_mcp_server(transport_security: TransportSecuritySettings | None = None
         """List the user's saved entries by filter, newest first — no search query.
 
         The deterministic browse/filter complement to ``retrieve``: filter by ``tags``
-        (entry carries ANY of them) and/or a ``saved_at`` date range, ordered newest-first
-        and paged via ``limit``/``offset``. Only active (fully processed) entries are
-        returned; with no filters it returns the most recent saves.
+        (entry carries ANY of them) and/or a recent ``window`` (e.g. '24h', '3d'), ordered
+        newest-first and paged via ``limit``/``offset``. Only active (fully processed)
+        entries are returned; with no filters it returns the most recent saves.
 
         Returns:
             list[ListResult]: id, url, title, tags, note, content, type, saved_at.
@@ -259,8 +261,7 @@ def build_mcp_server(transport_security: TransportSecuritySettings | None = None
         with auth.user_scope(user_id):
             rows = tools.list_tool(
                 tags=tags,
-                saved_after=saved_after,
-                saved_before=saved_before,
+                window=window,
                 limit=limit,
                 offset=offset,
             )

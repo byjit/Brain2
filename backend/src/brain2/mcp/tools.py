@@ -6,6 +6,9 @@ delegate to the shared entries/search services so REST and MCP share one impleme
 ``brain2.mcp.server`` wraps them with typed FastMCP tool definitions.
 """
 
+import re
+from datetime import datetime, timedelta, timezone
+
 from brain2.config import get_settings
 from brain2.db.connection import open_user_db
 from brain2.mcp import auth
@@ -21,6 +24,34 @@ def _open_current_user_db():
     """Open the per-user DB for the authenticated MCP request."""
     user_id = auth.current_user_id()
     return open_user_db(user_id, data_dir=get_settings().data_dir)
+
+
+# Compact, agent-friendly relative-window grammar: "<amount><unit>", e.g. "30m", "24h",
+# "3d", "2w". Maps each unit letter to its timedelta keyword.
+_WINDOW_UNITS = {"m": "minutes", "h": "hours", "d": "days", "w": "weeks"}
+_WINDOW_PATTERN = re.compile(r"^\s*(\d+)\s*([mhdw])\s*$", re.IGNORECASE)
+
+
+def _window_to_saved_after(window: str, *, now: datetime | None = None) -> str:
+    """Translate a relative time window into an inclusive ``saved_after`` lower bound.
+
+    Accepts a compact ``<amount><unit>`` string — ``m`` (minutes), ``h`` (hours), ``d``
+    (days) or ``w`` (weeks), e.g. ``"24h"`` (last 24 hours) or ``"3d"`` (last 3 days) — and
+    returns the ISO-8601 UTC cutoff ``now - window``. The cutoff is formatted with
+    ``isoformat()`` so it matches the stored ``saved_at`` column exactly, keeping the
+    downstream lexical range compare in ``list_entries`` sound. ``now`` is injectable for
+    deterministic tests.
+    """
+    match = _WINDOW_PATTERN.match(window)
+    if not match:
+        raise ValueError(
+            "window must be a positive integer followed by a unit — m (minutes), "
+            "h (hours), d (days), or w (weeks), e.g. '24h' or '3d'"
+        )
+    amount = int(match.group(1))
+    unit = _WINDOW_UNITS[match.group(2).lower()]
+    now = now or datetime.now(timezone.utc)
+    return (now - timedelta(**{unit: amount})).isoformat()
 
 
 def save_tool(
@@ -101,16 +132,17 @@ def retrieve_tool(
 def list_tool(
     *,
     tags: list[str] | None = None,
-    saved_after: str | None = None,
-    saved_before: str | None = None,
+    window: str | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> list[dict]:
     """Deterministic entry listing for the current user (spec §10 list).
 
     The browse/filter complement to ``retrieve``: filter by ``tags`` (ANY match) and/or a
-    ``saved_at`` date range, ordered newest-first, paged via ``limit``/``offset``. Returns
-    only active entries in the compact result shape (no relevance ``score``).
+    relative ``window`` (e.g. ``"24h"`` for the last 24 hours, ``"3d"`` for the last three
+    days), ordered newest-first, paged via ``limit``/``offset``. Returns only active
+    entries in the compact result shape (no relevance ``score``). The window is resolved to
+    a ``saved_after`` cutoff before hitting the ``list_entries`` primitive.
     """
     # Validate at the boundary so a direct/REST caller gets a clear error, not a raw
     # SQLite failure (the MCP layer additionally constrains these via Field bounds).
@@ -118,12 +150,12 @@ def list_tool(
         raise ValueError("limit must be >= 0")
     if offset < 0:
         raise ValueError("offset must be >= 0")
+    saved_after = _window_to_saved_after(window) if window else None
     with _open_current_user_db() as conn:
         return list_entries(
             conn,
             tags=tags,
             saved_after=saved_after,
-            saved_before=saved_before,
             limit=limit,
             offset=offset,
         )

@@ -299,7 +299,8 @@ backend/
   - `tools.{save,retrieve,list,delete,get_tags}_tool` — transport-free tool logic. They resolve
     the current user, open that user's DB, and **delegate to the shared services** so REST
     and MCP have one implementation (DRY): `save_tool`→`save_entry` (+ `apply_agent_tags`
-    when `tags` are given), `retrieve_tool`→`hybrid_search`, `list_tool`→`list_entries`,
+    when `tags` are given), `retrieve_tool`→`hybrid_search`, `list_tool`→`list_entries` (translating its agent-facing
+    relative `window`, e.g. `24h`/`3d`, into the service's `saved_after` cutoff),
     `delete_tool`→`delete_entry`, `get_tags_tool`→`tags_service.list_tags`. Per spec §10
     `save` treats `note` as authored
     text: for `type=note` it is the user's note (its only copy → `captured_text`); for

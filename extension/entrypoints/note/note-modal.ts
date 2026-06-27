@@ -1,6 +1,7 @@
 import type { ContentScriptContext } from "wxt/utils/content-script-context";
 import { createShadowRootUi } from "wxt/utils/content-script-ui/shadow-root";
 import { saveNoteMsg } from "@/services/capture/messages";
+import { isSignedOutError } from "@/entrypoints/popup/lib/is-signed-out";
 
 const ACCENT = "#6366F1";
 let mounted = false;
@@ -29,45 +30,51 @@ export async function mountNoteModal(ctx: ContentScriptContext): Promise<void> {
       left: "0",
       width: "100vw",
       height: "100vh",
-      background: "rgba(15, 23, 42, 0.3)",
+      background: "rgba(15, 23, 42, 0.25)",
       backdropFilter: "blur(4px)",
       webkitBackdropFilter: "blur(4px)",
       opacity: "0",
-      transition: "opacity 0.25s ease",
+      transition: "opacity 0.2s ease",
       zIndex: "2147483646",
     } as any);
     backdrop.addEventListener("click", () => ui.remove());
     container.appendChild(backdrop);
-
-    requestAnimationFrame(() => {
-      backdrop.style.opacity = "1";
-    });
 
     const card = document.createElement("div");
     Object.assign(card.style, {
       position: "fixed",
       top: "50%",
       left: "50%",
-      transform: "translate(-50%, -50%)",
+      transform: "translate(-50%, -48%) scale(0.98)",
       width: "min(500px, 94vw)",
       display: "flex",
       flexDirection: "column",
-      gap: "12px",
-      padding: "16px",
+      gap: "14px",
+      padding: "20px",
       background: "#ffffff",
       color: "#0f172a",
       border: "1px solid rgba(15, 23, 42, 0.08)",
-      borderRadius: "12px",
-      boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04), 0 0 0 1px rgba(0, 0, 0, 0.04)",
+      borderRadius: "14px",
+      boxShadow: "0 12px 32px -8px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(15, 23, 42, 0.05)",
       font: "14px/1.5 system-ui, -apple-system, sans-serif",
+      opacity: "0",
+      transition: "opacity 0.2s ease, transform 0.2s ease",
       zIndex: "2147483647",
     } satisfies Partial<CSSStyleDeclaration>);
 
+    // Fade the backdrop and ease the card in together for a calmer entrance.
+    requestAnimationFrame(() => {
+      backdrop.style.opacity = "1";
+      card.style.opacity = "1";
+      card.style.transform = "translate(-50%, -50%) scale(1)";
+    });
+
     const heading = document.createElement("div");
-    heading.textContent = "Quick Note to Brain2";
+    heading.textContent = "Quick note";
     Object.assign(heading.style, {
       fontWeight: "600",
-      fontSize: "14px",
+      fontSize: "15px",
+      letterSpacing: "-0.01em",
       color: "#0f172a",
     } satisfies Partial<CSSStyleDeclaration>);
 
@@ -78,9 +85,9 @@ export async function mountNoteModal(ctx: ContentScriptContext): Promise<void> {
       minHeight: "160px",
       resize: "none",
       boxSizing: "border-box",
-      padding: "10px 12px",
+      padding: "12px",
       border: "1px solid #e2e8f0",
-      borderRadius: "8px",
+      borderRadius: "10px",
       font: "13px/1.6 system-ui, -apple-system, sans-serif",
       color: "#0f172a",
       background: "#ffffff",
@@ -90,7 +97,7 @@ export async function mountNoteModal(ctx: ContentScriptContext): Promise<void> {
 
     textarea.addEventListener("focus", () => {
       textarea.style.borderColor = ACCENT;
-      textarea.style.boxShadow = "0 0 0 2px rgba(99, 102, 241, 0.15)";
+      textarea.style.boxShadow = "0 0 0 3px rgba(99, 102, 241, 0.12)";
     });
     textarea.addEventListener("blur", () => {
       textarea.style.borderColor = "#e2e8f0";
@@ -126,7 +133,7 @@ export async function mountNoteModal(ctx: ContentScriptContext): Promise<void> {
     const cancelBtn = document.createElement("button");
     cancelBtn.textContent = "Cancel";
     Object.assign(cancelBtn.style, {
-      padding: "6px 12px",
+      padding: "8px 16px",
       borderRadius: "8px",
       border: "1px solid #e2e8f0",
       background: "#ffffff",
@@ -134,7 +141,7 @@ export async function mountNoteModal(ctx: ContentScriptContext): Promise<void> {
       cursor: "pointer",
       font: "inherit",
       fontWeight: "500",
-      fontSize: "12px",
+      fontSize: "13px",
       transition: "all 0.15s ease",
     } satisfies Partial<CSSStyleDeclaration>);
 
@@ -151,17 +158,17 @@ export async function mountNoteModal(ctx: ContentScriptContext): Promise<void> {
     cancelBtn.addEventListener("click", () => ui.remove());
 
     const saveBtn = document.createElement("button");
-    saveBtn.textContent = "Save Note";
+    saveBtn.textContent = "Save note";
     Object.assign(saveBtn.style, {
-      padding: "6px 12px",
+      padding: "8px 16px",
       borderRadius: "8px",
       border: "none",
       background: ACCENT,
       color: "#ffffff",
       cursor: "pointer",
       font: "inherit",
-      fontWeight: "500",
-      fontSize: "12px",
+      fontWeight: "600",
+      fontSize: "13px",
       transition: "all 0.15s ease",
     } satisfies Partial<CSSStyleDeclaration>);
 
@@ -187,11 +194,15 @@ export async function mountNoteModal(ctx: ContentScriptContext): Promise<void> {
         status.style.color = "#059669";
         status.textContent = "Saved ✓";
         window.setTimeout(() => ui.remove(), 600);
-      } catch {
+      } catch (err) {
         saveBtn.disabled = false;
         saveBtn.style.opacity = "1";
         status.style.color = "#ef4444";
-        status.textContent = "Couldn't save — try the toolbar to sign in.";
+        // Only point the user at sign-in when the failure is actually an auth one;
+        // other failures (network, backend) must not masquerade as "please sign in".
+        status.textContent = isSignedOutError(err)
+          ? "Couldn't save — open the toolbar to sign in."
+          : "Couldn't save — please try again.";
       }
     });
 

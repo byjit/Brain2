@@ -9,7 +9,7 @@ Tests call the tool implementations directly with an explicit user context, prov
 import pytest
 
 from brain2.mcp import auth
-from brain2.mcp.tools import list_tool, retrieve_tool, save_tool
+from brain2.mcp.tools import _window_to_saved_after, list_tool, retrieve_tool, save_tool
 
 
 @pytest.fixture(autouse=True)
@@ -163,6 +163,50 @@ def test_list_negative_limit_rejected_with_clear_error():
     with auth.user_scope(get_settings().dev_user_id):
         with pytest.raises(ValueError, match="limit must be >= 0"):
             list_tool(limit=-1)
+
+
+def test_window_to_saved_after_translates_units():
+    """A relative window resolves to now-minus-window, ISO-8601 UTC (matches saved_at)."""
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 6, 27, 12, 0, 0, tzinfo=timezone.utc)
+    assert _window_to_saved_after("30m", now=now) == "2026-06-27T11:30:00+00:00"
+    assert _window_to_saved_after("24h", now=now) == "2026-06-26T12:00:00+00:00"
+    assert _window_to_saved_after("3d", now=now) == "2026-06-24T12:00:00+00:00"
+    assert _window_to_saved_after("2w", now=now) == "2026-06-13T12:00:00+00:00"
+    # Unit letter is case-insensitive and surrounding whitespace is tolerated.
+    assert _window_to_saved_after(" 1H ", now=now) == "2026-06-27T11:00:00+00:00"
+
+
+def test_window_rejects_unparseable_value():
+    with pytest.raises(ValueError, match="window must be"):
+        _window_to_saved_after("yesterday")
+
+
+def test_list_window_filters_to_recent_entries():
+    """list(window=...) keeps entries saved within the window, drops older ones."""
+    from brain2.config import get_settings
+    from brain2.db.connection import open_user_db
+
+    user_id = get_settings().dev_user_id
+    with auth.user_scope(user_id):
+        recent = save_tool(type="note", note="saved just now")
+        old = save_tool(type="note", note="saved long ago")
+        with open_user_db(user_id, data_dir=get_settings().data_dir) as conn:
+            conn.execute(
+                "UPDATE entries SET status='active' WHERE id IN (?, ?)",
+                (recent["id"], old["id"]),
+            )
+            # Pin the old entry well outside any plausible recent window.
+            conn.execute(
+                "UPDATE entries SET saved_at='2026-01-01T00:00:00+00:00' WHERE id=?",
+                (old["id"],),
+            )
+            conn.commit()
+
+        ids = {r["id"] for r in list_tool(window="24h")}
+        assert recent["id"] in ids
+        assert old["id"] not in ids
 
 
 def test_retrieve_outside_user_scope_raises():

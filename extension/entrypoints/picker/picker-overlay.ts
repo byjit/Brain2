@@ -1,6 +1,7 @@
 import { createShadowRootUi } from "wxt/utils/content-script-ui/shadow-root";
 import type { ContentScriptContext } from "wxt/utils/content-script-context";
 import { saveClipMsg } from "@/services/capture/messages";
+import { isSignedOutError } from "@/entrypoints/popup/lib/is-signed-out";
 import { htmlToMarkdown } from "./html-to-markdown";
 
 // ---------------------------------------------------------------------------
@@ -45,6 +46,15 @@ export function elementToClip(el: Element): {
     sourceUrl: location.href,
     title: document.title,
   };
+}
+
+/** Display host for a URL (e.g. "example.com"), falling back to the raw string. */
+export function hostFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -215,48 +225,65 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
       left: "0",
       width: "100vw",
       height: "100vh",
-      background: "rgba(15, 23, 42, 0.3)",
+      background: "rgba(15, 23, 42, 0.25)",
       backdropFilter: "blur(4px)",
       webkitBackdropFilter: "blur(4px)",
       opacity: "0",
-      transition: "opacity 0.25s ease",
+      transition: "opacity 0.2s ease",
       zIndex: "2147483646",
     } as any);
     backdrop.addEventListener("click", () => ui.remove());
     container.appendChild(backdrop);
-
-    // Trigger opacity transition
-    requestAnimationFrame(() => {
-      backdrop.style.opacity = "1";
-    });
 
     const card = document.createElement("div");
     Object.assign(card.style, {
       position: "fixed",
       top: "50%",
       left: "50%",
-      transform: "translate(-50%, -50%)",
+      transform: "translate(-50%, -48%) scale(0.98)",
       width: "min(560px, 90vw)",
       maxHeight: "80vh",
       display: "flex",
       flexDirection: "column",
-      gap: "14px",
+      gap: "16px",
       padding: "24px",
       background: "#ffffff",
       color: "#0f172a",
-      border: "1px solid rgba(99, 102, 241, 0.15)",
-      borderRadius: "16px",
-      boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(99, 102, 241, 0.12)",
+      border: "1px solid rgba(15, 23, 42, 0.08)",
+      borderRadius: "14px",
+      boxShadow: "0 12px 32px -8px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(15, 23, 42, 0.05)",
       font: "14px/1.5 system-ui, -apple-system, sans-serif",
+      opacity: "0",
+      transition: "opacity 0.2s ease, transform 0.2s ease",
       zIndex: "2147483647",
     } satisfies Partial<CSSStyleDeclaration>);
 
+    // Fade the backdrop and ease the card in together for a calmer entrance.
+    requestAnimationFrame(() => {
+      backdrop.style.opacity = "1";
+      card.style.opacity = "1";
+      card.style.transform = "translate(-50%, -50%) scale(1)";
+    });
+
     const heading = document.createElement("div");
-    heading.textContent = "Review Selected Content";
+    heading.textContent = "Review selection";
     Object.assign(heading.style, {
-      fontWeight: "700",
-      fontSize: "16px",
-      color: "#1e293b",
+      fontWeight: "600",
+      fontSize: "15px",
+      letterSpacing: "-0.01em",
+      color: "#0f172a",
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    // Subtle source line gives provenance without clutter; truncates on overflow.
+    const source = document.createElement("div");
+    source.textContent = hostFromUrl(sourceUrl);
+    Object.assign(source.style, {
+      marginTop: "-10px",
+      fontSize: "12px",
+      color: "#94a3b8",
+      whiteSpace: "nowrap",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
     } satisfies Partial<CSSStyleDeclaration>);
 
     const textarea = document.createElement("textarea");
@@ -269,19 +296,23 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
       boxSizing: "border-box",
       padding: "12px",
       border: "1px solid #e2e8f0",
-      borderRadius: "12px",
+      borderRadius: "10px",
       font: "13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace",
       color: "#334155",
       background: "#f8fafc",
       outline: "none",
-      transition: "border-color 0.15s ease",
+      transition: "border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease",
     } satisfies Partial<CSSStyleDeclaration>);
-    
+
     textarea.addEventListener("focus", () => {
       textarea.style.borderColor = ACCENT;
+      textarea.style.background = "#ffffff";
+      textarea.style.boxShadow = "0 0 0 3px rgba(99, 102, 241, 0.12)";
     });
     textarea.addEventListener("blur", () => {
       textarea.style.borderColor = "#e2e8f0";
+      textarea.style.background = "#f8fafc";
+      textarea.style.boxShadow = "none";
     });
 
     const status = document.createElement("div");
@@ -301,8 +332,8 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
     const cancelBtn = document.createElement("button");
     cancelBtn.textContent = "Cancel";
     Object.assign(cancelBtn.style, {
-      padding: "8px 18px",
-      borderRadius: "10px",
+      padding: "8px 16px",
+      borderRadius: "8px",
       border: "1px solid #e2e8f0",
       background: "#ffffff",
       color: "#475569",
@@ -312,21 +343,23 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
       fontSize: "13px",
       transition: "all 0.15s ease",
     } satisfies Partial<CSSStyleDeclaration>);
-    
+
     cancelBtn.addEventListener("mouseover", () => {
-      cancelBtn.style.background = "#f1f5f9";
+      cancelBtn.style.background = "#f8fafc";
       cancelBtn.style.borderColor = "#cbd5e1";
+      cancelBtn.style.color = "#0f172a";
     });
     cancelBtn.addEventListener("mouseout", () => {
       cancelBtn.style.background = "#ffffff";
       cancelBtn.style.borderColor = "#e2e8f0";
+      cancelBtn.style.color = "#475569";
     });
 
     const saveBtn = document.createElement("button");
-    saveBtn.textContent = "Save Clip";
+    saveBtn.textContent = "Save clip";
     Object.assign(saveBtn.style, {
-      padding: "8px 18px",
-      borderRadius: "10px",
+      padding: "8px 16px",
+      borderRadius: "8px",
       border: "none",
       background: ACCENT,
       color: "#ffffff",
@@ -334,10 +367,9 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
       font: "inherit",
       fontWeight: "600",
       fontSize: "13px",
-      boxShadow: "0 2px 4px rgba(99, 102, 241, 0.2)",
       transition: "all 0.15s ease",
     } satisfies Partial<CSSStyleDeclaration>);
-    
+
     saveBtn.addEventListener("mouseover", () => {
       saveBtn.style.background = "#4f46e5";
     });
@@ -357,6 +389,11 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
           {
             type: "clip",
             captured_text: textarea.value,
+            // A clip is URL-backed: the backend requires `url` and dedups on its
+            // normalized form (spec §7.1). For the element picker that URL is the
+            // page the selection came from, which is also recorded as `source_url`
+            // for clip provenance (DB schema §schema). Both are the same page URL.
+            url: sourceUrl,
             source_url: sourceUrl,
             title: title || undefined,
           },
@@ -365,17 +402,21 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
         status.style.color = "#059669";
         status.textContent = "Saved ✓";
         window.setTimeout(() => ui.remove(), 600);
-      } catch {
+      } catch (err) {
         // Keep the card open so the user's edited text is never lost.
         saveBtn.disabled = false;
         saveBtn.style.opacity = "1";
         status.style.color = "#ef4444";
-        status.textContent = "Couldn't save — try the toolbar to sign in.";
+        // Only point the user at sign-in when the failure is actually an auth one;
+        // other failures (network, backend) must not masquerade as "please sign in".
+        status.textContent = isSignedOutError(err)
+          ? "Couldn't save — open the toolbar to sign in."
+          : "Couldn't save — please try again.";
       }
     });
 
     actions.append(cancelBtn, saveBtn);
-    card.append(heading, textarea, status, actions);
+    card.append(heading, source, textarea, status, actions);
     container.appendChild(card);
     textarea.focus();
   }

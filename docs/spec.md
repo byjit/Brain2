@@ -452,19 +452,18 @@ All filter fields optional. `tags` and `type` are applied as pre-filters before 
 
 ### `list`
 
-Deterministic browse/filter — no search query, no relevance ranking. Filter by tag and/or a `saved_at` date range, ordered newest-first, paged. The complement to `retrieve`'s relevance search.
+Deterministic browse/filter — no search query, no relevance ranking. Filter by tag and/or a recent time `window`, ordered newest-first, paged. The complement to `retrieve`'s relevance search.
 
 ```json
 {
   "tags": ["rust"],
-  "saved_after": "2026-05-01T00:00:00Z",
-  "saved_before": "2026-06-01T00:00:00Z",
+  "window": "3d",
   "limit": 20,
   "offset": 0
 }
 ```
 
-All fields optional. `tags` match **ANY** (union — an entry carrying any of them qualifies), deliberately unlike `retrieve`'s conjunctive (ALL) pre-filter, because `list` browses by topic. `saved_after` / `saved_before` are inclusive bounds on `saved_at`. Only `active` entries are returned (pending/failed aren't ready to surface; failures live in the §7.4 repair surface). With no filters it returns the most recent saves. Results use the same compact shape as `retrieve` minus `score`:
+All fields optional. `tags` match **ANY** (union — an entry carrying any of them qualifies), deliberately unlike `retrieve`'s conjunctive (ALL) pre-filter, because `list` browses by topic. `window` is a relative recency filter — an integer plus a unit (`m` minutes, `h` hours, `d` days, `w` weeks), e.g. `24h` (last 24 hours) or `3d` (last 3 days) — resolved server-side to an inclusive `saved_at >= now - window` cutoff. Only `active` entries are returned (pending/failed aren't ready to surface; failures live in the §7.4 repair surface). With no filters it returns the most recent saves. Results use the same compact shape as `retrieve` minus `score`:
 
 ```json
 [

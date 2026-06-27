@@ -12,18 +12,22 @@ plus the security, OAuth, and backup details that matter once it leaves localhos
 ## Topology
 
 ```
-                          https://app.brain2.example        (platform dashboard, static)
-                                     │  Google Sign-In, token mgmt, repair
-                                     ▼
-  Browser / Extension ─────► https://api.brain2.example     (FastAPI: REST + /oauth/* + /connect/mcp)
-  AI agents (MCP) ─────────►        │  per-user SQLite under a persistent volume
-                                     ▼
+                       https://brain2.useisbeta.com    (one host, fronted by Caddy)
+  Browser / Extension ───►  ├─ /  (+ SPA routes)                  → platform dashboard (static, Caddy file_server)
+  AI agents (MCP) ───────►  └─ /health /entries* /auth* /api/*    → FastAPI backend (127.0.0.1:8001)
+                               /oauth* /settings* /connect*          REST + /oauth/* + /connect/mcp
+                               /.well-known/*
+                                       │  per-user SQLite under a persistent volume
+                                       ▼
                           /data/users/{user_id}.db  +  /data/auth.db   (must persist & be backed up)
 ```
 
-Two public origins: the **API** (`api.`) and the **dashboard** (`app.`). Both must be
-served over **HTTPS**. SQLite lives on a **persistent, single-writer volume** — Brain2 is
-not designed for horizontally-scaled stateless replicas writing the same files.
+One public origin: `https://brain2.useisbeta.com`, served over **HTTPS** by the shared
+Caddy reverse proxy. Caddy serves the dashboard SPA from `platform/dist` as static files and
+reverse-proxies the API / OAuth / MCP paths to the FastAPI backend on `127.0.0.1:8001` —
+there is no separate dashboard process. SQLite lives on a **persistent, single-writer
+volume** — Brain2 is not designed for horizontally-scaled stateless replicas writing the
+same files.
 
 ---
 
@@ -33,9 +37,9 @@ not designed for horizontally-scaled stateless replicas writing the same files.
   Render, Railway, a container on a VPS, etc.). **Not** a stateless/ephemeral FaaS — the
   per-user SQLite files and the in-process async enrichment worker need a durable disk and
   a stable process.
-- TLS for both origins (managed certs or a reverse proxy such as Caddy/Nginx/Traefik).
+- TLS for the origin (managed certs or a reverse proxy such as Caddy/Nginx/Traefik).
 - A **Gemini API key** (live summarization, embeddings, auto-tagging).
-- A **Google Cloud OAuth 2.0 Client** (Web application) configured for the prod origins.
+- A **Google Cloud OAuth 2.0 Client** (Web application) configured for the prod origin.
 - The extension's **published** redirect URL(s) — one per store listing, since each
   store assigns its own extension ID (Chrome Web Store and, if shipping to Edge, Edge Add-ons).
 
@@ -50,13 +54,16 @@ cd backend
 uv sync --no-dev                                 # production deps only
 # run the ASGI app (use multiple workers ONLY if they share the same disk volume;
 # SQLite is single-writer per file — keep it modest, e.g. 1 worker per box)
-uv run uvicorn brain2.main:app --host 0.0.0.0 --port 8000
+uv run uvicorn brain2.main:app --host 127.0.0.1 --port 8001
 ```
 
-Put it behind a TLS-terminating reverse proxy that forwards `https://api.brain2.example`
-→ `127.0.0.1:8000`, and run it under a supervisor (systemd / the platform's process
-manager) so it restarts on crash and the async worker keeps draining. The worker runs
-in the app lifespan (`create_app(enable_worker=True)`, the default).
+Bind to `127.0.0.1` only — the backend is reachable solely through Caddy. The shared Caddy
+instance terminates TLS for `https://brain2.useisbeta.com` and reverse-proxies the API /
+OAuth / MCP paths (`/health`, `/entries*`, `/auth*`, `/api/*`, `/oauth*`, `/settings*`,
+`/connect*`, `/.well-known/*`) to `127.0.0.1:8001`; every other path is served as the static
+dashboard SPA. Run it under systemd (the `brain2` unit) so it restarts on crash and the async
+worker keeps draining. The worker runs in the app lifespan
+(`create_app(enable_worker=True)`, the default).
 
 ### Production environment (repo-root `.env` or real env vars)
 
@@ -71,7 +78,7 @@ GOOGLE_CLIENT_SECRET=...
 # Auth / sessions — HARDEN THESE
 JWT_SECRET=<64+ chars of high entropy>           # REQUIRED: rotate the dev default out
 COOKIE_SECURE=true                               # session cookie only over HTTPS
-DASHBOARD_URL=https://app.brain2.example         # post-login redirect target
+DASHBOARD_URL=https://brain2.useisbeta.com       # post-login redirect target
 ACCESS_TOKEN_TTL=3600                            # 1h access tokens
 REFRESH_TOKEN_TTL=2592000                        # 30d rotating refresh tokens (MCP clients)
 SESSION_TTL=1209600                              # 14d dashboard session
@@ -97,7 +104,7 @@ Optional tuning (safe defaults exist; see `backend/src/brain2/config.py`):
 ### Health & process checks
 
 ```bash
-curl -fsS https://api.brain2.example/health      # -> {"status":"ok"}
+curl -fsS https://brain2.useisbeta.com/health    # -> {"status":"ok"}
 ```
 
 Wire `/health` to your platform's liveness/readiness probe and uptime monitor.
@@ -108,9 +115,8 @@ Wire `/health` to your platform's liveness/readiness probe and uptime monitor.
 
 In Google Cloud Console → **Credentials** → your **Web application** OAuth client:
 
-- **Authorized JavaScript origins:** `https://app.brain2.example`,
-  `https://api.brain2.example`
-- **Authorized redirect URIs:** `https://api.brain2.example/api/auth/callback/google`
+- **Authorized JavaScript origins:** `https://brain2.useisbeta.com`
+- **Authorized redirect URIs:** `https://brain2.useisbeta.com/api/auth/callback/google`
 - Configure the **OAuth consent screen** (app name, support email, scopes:
   `openid email profile`) and move it to **Published** for non-test users.
 
@@ -134,11 +140,13 @@ pnpm install
 pnpm build                                        # vite build && tsc → dist/
 ```
 
-Serve `platform/dist/` as static assets behind `https://app.brain2.example` (any static
-host/CDN: Netlify, Vercel static, Cloudflare Pages, S3+CloudFront, or your reverse proxy).
-Ensure the dashboard's API base points at `https://api.brain2.example` (configure via the
-platform's build env; check `platform/`'s env handling — it uses `@t3-oss/env-core`).
-`DASHBOARD_URL` on the backend must equal the deployed dashboard origin exactly.
+Caddy serves `platform/dist/` directly as static files on `https://brain2.useisbeta.com`
+(the `file_server` fallback for every path not matched by the API route) — there is no
+separate dashboard service to run; a frontend change deploys by rebuilding `platform/dist`,
+not by restarting `brain2`. Ensure the dashboard's API base points at the same origin
+`https://brain2.useisbeta.com` (configure via the platform's build env; check `platform/`'s
+env handling — it uses `@t3-oss/env-core`). `DASHBOARD_URL` on the backend must equal that
+origin exactly.
 
 ---
 
@@ -148,12 +156,12 @@ platform's build env; check `platform/`'s env handling — it uses `@t3-oss/env-
 cd extension
 # production env
 cat > .env <<'EOF'
-VITE_BRAIN2_API_URL=https://api.brain2.example
+VITE_BRAIN2_API_URL=https://brain2.useisbeta.com
 VITE_BRAIN2_OAUTH_CLIENT_ID=brain2-extension
 EOF
 
 # point host_permissions at the prod API origin
-#   edit extension/wxt.config.ts: host_permissions: ["https://api.brain2.example/*"]
+#   edit extension/wxt.config.ts: host_permissions: ["https://brain2.useisbeta.com/*"]
 #   (it derives from VITE_BRAIN2_API_URL via process.env at build time)
 
 pnpm compile && pnpm test                          # gate
@@ -202,7 +210,7 @@ once) and configure their MCP client against the hosted endpoint:
 {
   "mcpServers": {
     "brain2": {
-      "url": "https://api.brain2.example/connect/mcp",
+      "url": "https://brain2.useisbeta.com/connect/mcp",
       "headers": { "Authorization": "Bearer br2_live_..." }
     }
   }
@@ -216,7 +224,7 @@ metadata), Dynamic Client Registration (RFC 7591), PKCE S256, and a rotating
 `refresh_token` grant. To connect a web-based client that natively supports this (such as
 Claude Web custom connectors):
 
-1. In the web client's settings, add a custom connector pointing to the MCP URL: `https://api.brain2.example/connect/mcp`.
+1. In the web client's settings, add a custom connector pointing to the MCP URL: `https://brain2.useisbeta.com/connect/mcp`.
 2. The client receives a `401` + `WWW-Authenticate` challenge, discovers the metadata
    endpoints, **registers itself** via `POST /oauth/register` (no manual
    `OAUTH_REDIRECT_URIS` edit needed for DCR-capable clients), and opens the browser flow:
@@ -241,8 +249,8 @@ Tools: `save`, `retrieve`, `list`, `delete`, `get_tags`.
 
 After deploy:
 
-1. `curl -fsS https://api.brain2.example/health` → `{"status":"ok"}`.
-2. Dashboard: open `https://app.brain2.example`, sign in with Google, confirm
+1. `curl -fsS https://brain2.useisbeta.com/health` → `{"status":"ok"}`.
+2. Dashboard: open `https://brain2.useisbeta.com`, sign in with Google, confirm
    `GET /auth/me` returns your identity and the session cookie is `Secure`.
 3. Create an API key on the dashboard; configure an MCP client; run a `save` then a
    `retrieve` and confirm recall.
@@ -256,11 +264,11 @@ After deploy:
 ## 7. Security checklist
 
 - [ ] `JWT_SECRET` set to a strong, unique value (not the dev default); stored as a secret.
-- [ ] `COOKIE_SECURE=true`; both origins HTTPS-only; HSTS at the proxy.
+- [ ] `COOKIE_SECURE=true`; the origin HTTPS-only; HSTS at the proxy.
 - [ ] `OAUTH_REDIRECT_URIS` is an **exact** allowlist (the published extension redirect and
       nothing broader); `DASHBOARD_URL` is the exact dashboard origin.
 - [ ] Google OAuth consent screen published; redirect URIs limited to
-      `https://api.brain2.example/api/auth/callback/google`.
+      `https://brain2.useisbeta.com/api/auth/callback/google`.
 - [ ] `GEMINI_API_KEY` / `GOOGLE_CLIENT_SECRET` injected as secrets, never committed; the
       repo-root `.env` and the `data/` dir (`*.db`, `auth.db`) are gitignored.
 - [ ] Backend not run with the dev default secret or `COOKIE_SECURE=false`.
