@@ -52,6 +52,21 @@ async function generate() {
 		.png()
 		.toFile(path.join(publicDir, "favicon.ico"));
 	console.log("Generated favicon.ico");
+
+	// Generate extension icons
+	const extensionIconDir = path.resolve(__dirname, "../../extension/public/icon");
+	if (!fs.existsSync(extensionIconDir)) {
+		fs.mkdirSync(extensionIconDir, { recursive: true });
+	}
+
+	const sizes = [16, 32, 48, 96, 128];
+	for (const size of sizes) {
+		await sharp(svgBuffer)
+			.resize(size, size)
+			.png()
+			.toFile(path.join(extensionIconDir, `${size}.png`));
+		console.log(`Generated extension icon: ${size}.png`);
+	}
 }
 
 generate().catch((err) => {

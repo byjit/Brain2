@@ -133,7 +133,9 @@ backend/
     title+tags_text+content, with optional `tags`/`type` pre-filters (via `prefilter`) and
     a `limit` (default 10). User query text is reduced to quoted word tokens so FTS5
     operators (quotes, NEAR, AND/OR, `*`, `:`, parens) can't cause syntax errors. Returns
-    the compact spec §10 shape (incl. `content`); `score` is `-bm25()` (higher = better).
+    the compact spec §10 shape (incl. `content` + `note_source`, so an agent can read
+    what BM25 matched on and calibrate trust in the note); `score` is `-bm25()`
+    (higher = better).
     Kept as the internal BM25-only path.
   - `search.hybrid_search` — the public retrieve path (spec §10/§11). Fuses BM25 (set A,
     reusing `search_entries` — no second BM25 copy) and `vector_search` (set B) with
@@ -219,7 +221,10 @@ backend/
   - `note_resolver.resolve_note(entry, *, fetcher, summarizer)` — the single cohesive
     fallback ladder (spec §7.3). `note` type → user text verbatim (`note_source=user`, no
     LLM); `clip`/`conversation` → persisted `content`, verbatim when < ~400 chars else
-    summarized (`note_source=body`); `page` → **re-fetch** the URL (bodies are not
+    summarized (`note_source=body`) — EXCEPT a code-dominant short `clip`
+    (`is_code_dominant`, conservative: fence or code-line majority), which is captioned via
+    the summarize path so its vector is paraphrase-searchable while the verbatim code stays in
+    `content`; `page` → **re-fetch** the URL (bodies are not
     persisted) then walk body→og/meta→title, summarizing the body and taking og/title
     verbatim (`note_source=body|og|title`). Returns a `ResolvedNote(note, note_source)`.
     `note_resolver.resolve_basis(entry, *, fetcher)` is the M5 sibling: it walks the SAME

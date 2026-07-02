@@ -47,7 +47,7 @@ def test_orders_newest_first(conn):
 def test_result_shape_has_no_score(conn):
     _save_active(conn, text="something")
     row = list_entries(conn)[0]
-    assert set(row.keys()) == {"id", "url", "title", "tags", "note", "content", "type", "saved_at"}
+    assert set(row.keys()) == {"id", "url", "title", "tags", "note", "note_source", "content", "type", "saved_at"}
     assert "score" not in row
 
 

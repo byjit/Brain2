@@ -5,7 +5,12 @@ IS the note (no LLM); a clip < ~400 chars IS the note (no LLM); otherwise summar
 All tests run offline using the fake providers.
 """
 
-from brain2.services.note_resolver import ResolvedNote, resolve_note
+from brain2.services.note_resolver import (
+    ResolvedNote,
+    is_code_dominant,
+    resolve_basis,
+    resolve_note,
+)
 from brain2.services.providers.page_fetcher import FakePageFetcher, PageContent
 from brain2.services.providers.summarizer import SUMMARY_INPUT_MAX_CHARS, FakeSummarizer
 
@@ -126,3 +131,112 @@ def test_long_body_summarized_from_bounded_prefix():
 
 def test_resolved_note_is_dataclass():
     assert ResolvedNote(note="x", note_source="body").note == "x"
+
+
+# --- clip: code-dominant short clips are captioned, not verbatim -------------
+# A raw code snippet embeds poorly for paraphrase search, so a code-dominant short
+# clip takes the summarize path (a descriptive caption) instead of short-circuiting to
+# verbatim. The verbatim code stays safe in `content`. Scope is `clip` ONLY.
+
+
+def test_short_code_clip_with_fence_needs_summary():
+    # A fenced code block is unambiguous code -> summarize path, note not yet set.
+    fenced = "```js\nconst x = debounce(fn, 200);\n```"
+    basis = resolve_basis(_entry(type="clip", content=fenced), fetcher=FakePageFetcher())
+    assert basis.needs_summary is True
+    assert basis.note_source == "body"
+    assert basis.note == ""  # produced downstream by the tagger
+    assert basis.text == fenced  # the verbatim clip is still embedded/basis
+
+
+def test_short_code_clip_without_fence_needs_summary():
+    # Several lines of clearly-code JS (no fence) -> still the summarize path.
+    code = (
+        "function debounce(fn, wait) {\n"
+        "  let t;\n"
+        "  return (...args) => {\n"
+        "    clearTimeout(t);\n"
+        "    t = setTimeout(() => fn(...args), wait);\n"
+        "  };\n"
+        "}"
+    )
+    basis = resolve_basis(_entry(type="clip", content=code), fetcher=FakePageFetcher())
+    assert basis.needs_summary is True
+    assert basis.note_source == "body"
+    assert basis.note == ""
+
+
+def test_short_prose_clip_stays_verbatim():
+    prose = "a brief highlighted snippet of ordinary prose"
+    basis = resolve_basis(_entry(type="clip", content=prose), fetcher=FakePageFetcher())
+    assert basis.needs_summary is False
+    assert basis.note_source == "body"
+    assert basis.note == prose
+    assert basis.text == prose
+
+
+def test_short_prose_with_inline_code_token_stays_verbatim():
+    # Ordinary prose that merely mentions an identifier must NOT be treated as code.
+    prose = "Use the useEffect() hook here to clean up the timer when done."
+    basis = resolve_basis(_entry(type="clip", content=prose), fetcher=FakePageFetcher())
+    assert basis.needs_summary is False
+    assert basis.note == prose
+
+
+def test_short_code_conversation_stays_verbatim():
+    # The code-dominant exception is scoped to `clip` only; conversation is unchanged.
+    code = "```js\nconst x = debounce(fn, 200);\n```"
+    basis = resolve_basis(_entry(type="conversation", content=code), fetcher=FakePageFetcher())
+    assert basis.needs_summary is False
+    assert basis.note == code
+
+
+def test_short_code_clip_resolve_note_calls_summarizer():
+    # resolve_note mirrors resolve_basis: a short code clip is summarized (captioned).
+    summarizer = FakeSummarizer()
+    fenced = "```py\nx = [i for i in range(10) if i % 2 == 0]\n```"
+    result = resolve_note(
+        _entry(type="clip", content=fenced), fetcher=FakePageFetcher(), summarizer=summarizer
+    )
+    assert result.note_source == "body"
+    assert result.note.startswith("Summary:")
+    assert len(summarizer.calls) == 1
+
+
+def test_short_prose_clip_resolve_note_stays_verbatim():
+    summarizer = FakeSummarizer()
+    prose = "a brief highlighted snippet"
+    result = resolve_note(
+        _entry(type="clip", content=prose), fetcher=FakePageFetcher(), summarizer=summarizer
+    )
+    assert result.note == prose
+    assert summarizer.calls == []
+
+
+# --- is_code_dominant heuristic: direct unit tests --------------------------
+
+
+def test_is_code_dominant_empty_is_false():
+    assert is_code_dominant("") is False
+    assert is_code_dominant("   \n\t  ") is False
+
+
+def test_is_code_dominant_prose_is_false():
+    assert is_code_dominant("This is a perfectly ordinary sentence of prose.") is False
+
+
+def test_is_code_dominant_prose_with_inline_token_is_false():
+    assert is_code_dominant("Call the render() method when the component mounts.") is False
+
+
+def test_is_code_dominant_fenced_block_is_true():
+    assert is_code_dominant("```\nconst x = 1;\n```") is True
+
+
+def test_is_code_dominant_unfenced_code_is_true():
+    code = (
+        "const t = setTimeout(() => fn(), wait);\n"
+        "clearTimeout(t);\n"
+        "return { done: true };"
+    )
+    assert is_code_dominant(code) is True

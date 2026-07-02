@@ -67,7 +67,19 @@ class ListResult(BaseModel):
     title: str | None
     tags: list[str]
     note: str | None
-    content: str | None
+    note_source: str = Field(
+        description=(
+            "Provenance of the note — how deep it goes: 'body' (summary of the full body), "
+            "'og' (publisher og/meta teaser), 'title' (bare page title, shallowest), or "
+            "'user' (user-authored). Calibrate trust in the note accordingly."
+        )
+    )
+    content: str | None = Field(
+        description=(
+            "Verbatim captured text for clip/conversation/note entries (not re-fetchable "
+            "from the URL); null for page entries — fetch the url for depth"
+        )
+    )
     type: str
     saved_at: str
 
@@ -206,7 +218,9 @@ def build_mcp_server(transport_security: TransportSecuritySettings | None = None
         ranking. Returns compact hits ordered best-first; higher ``score`` is more relevant.
 
         Returns:
-            list[RetrieveResult]: id, url, title, tags, note, content, type, saved_at, score.
+            list[RetrieveResult]: id, url, title, tags, note, note_source, content, type,
+            saved_at, score. ``content`` is the verbatim capture for clip/conversation/note
+            hits (answer from it directly); for page hits it is null — fetch ``url`` for depth.
         """
         user_id = _resolve_user(ctx)
         with auth.user_scope(user_id):
@@ -255,7 +269,7 @@ def build_mcp_server(transport_security: TransportSecuritySettings | None = None
         entries are returned; with no filters it returns the most recent saves.
 
         Returns:
-            list[ListResult]: id, url, title, tags, note, content, type, saved_at.
+            list[ListResult]: id, url, title, tags, note, note_source, content, type, saved_at.
         """
         user_id = _resolve_user(ctx)
         with auth.user_scope(user_id):

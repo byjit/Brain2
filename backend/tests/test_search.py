@@ -45,9 +45,10 @@ def test_result_shape_matches_spec(conn):
     )
     results = search_entries(conn, "http")
     r = results[0]
-    assert set(r.keys()) == {"id", "url", "title", "tags", "note", "content", "type", "saved_at", "score"}
+    assert set(r.keys()) == {"id", "url", "title", "tags", "note", "note_source", "content", "type", "saved_at", "score"}
     assert r["id"] == res.id
     assert r["title"] == "Hyper HTTP"
+    assert r["note_source"] == "body"
     assert r["type"] == "clip"
     assert isinstance(r["tags"], list)
     assert isinstance(r["score"], float)

@@ -258,8 +258,8 @@ def list_entries(
         offset: Entries to skip, for paging (default 0).
 
     Returns:
-        Compact result dicts (``id, url, title, tags, note, content, type, saved_at``),
-        newest first. Only ``active`` entries are returned — pending/failed rows aren't
+        Compact result dicts (``id, url, title, tags, note, note_source, content, type,
+        saved_at``), newest first. Only ``active`` entries are returned — pending/failed rows aren't
         ready to surface (failures live in the §7.4 repair surface instead).
     """
     # Boundary guards: a negative limit becomes SQLite 'LIMIT -1' (unbounded) and a
@@ -285,7 +285,7 @@ def list_entries(
 
     # Tie-break by id so entries sharing a saved_at paginate in a stable order.
     sql = f"""
-        SELECT id, url, title, note, content, type, saved_at
+        SELECT id, url, title, note, note_source, content, type, saved_at
           FROM entries
          WHERE {" AND ".join(where)}
          ORDER BY saved_at DESC, id DESC

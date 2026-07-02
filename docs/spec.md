@@ -224,7 +224,7 @@ Each entry records `note_source` (`body | og | title | user`) so the user and th
 | Type           | Capture mode (§8)                   | Note generation                                        | Content persisted?                                                                     |
 | -------------- | ----------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------- |
 | `page`         | Save page                           | Summary of body; OG/meta or title fallback             | **No** - re-fetchable via URL                                                          |
-| `clip`         | Select content (element picker)     | If < 400 chars: selection is the note. Else: summarize | **Yes** - the highlight is the value; re-fetching the page won't recover the selection |
+| `clip`         | Select content (element picker)     | If < 400 chars: selection is the note. Else: summarize. Exception: a code-dominant short clip is captioned via the same single combined tagging call (no extra LLM call) since raw code embeds poorly for paraphrase search; the verbatim selection still stays in `content` | **Yes** - the highlight is the value; re-fetching the page won't recover the selection |
 | `conversation` | Save page on a detected chat domain | Summary; long threads → concise summary                | **Yes** - conversation URLs are private/auth-gated and not externally re-fetchable     |
 | `note`         | Custom note                         | Note = what the user typed; no summarization           | **Yes** - no URL, the text is the only copy                                            |
 
@@ -433,7 +433,7 @@ Hybrid search: BM25 on title + tags + persisted content, vector on note, merged 
 }
 ```
 
-All filter fields optional. `tags` and `type` are applied as pre-filters before ranking. Results are compact - everything an agent needs in one call, so there is no separate `get` tool:
+All filter fields optional. `tags` and `type` are applied as pre-filters before ranking. Results are compact - everything an agent needs in one call, so there is no separate `get` tool. That "everything" includes the two fields an agent needs to act without a round trip: `content` (the verbatim capture for `clip`/`conversation`/`note` — the types whose text is _not_ re-fetchable from a URL; `null` for `page`, where the URL is the depth path) and `note_source` (§7.3 provenance — `body`/`og`/`title`/`user` — so the agent can calibrate trust in the note before answering from it). An agent should answer from `note`/`content` directly and hand the user the `url` when they want the full source:
 
 ```json
 [
@@ -443,6 +443,8 @@ All filter fields optional. `tags` and `type` are applied as pre-filters before 
     "title": "hyper - fast HTTP for Rust",
     "tags": ["rust", "http", "async"],
     "note": "Fast async HTTP client for Rust; considered for the data ingestion service",
+    "note_source": "body",
+    "content": null,
     "type": "page",
     "saved_at": "2026-05-20T14:23:00Z",
     "score": 0.91
@@ -463,7 +465,7 @@ Deterministic browse/filter — no search query, no relevance ranking. Filter by
 }
 ```
 
-All fields optional. `tags` match **ANY** (union — an entry carrying any of them qualifies), deliberately unlike `retrieve`'s conjunctive (ALL) pre-filter, because `list` browses by topic. `window` is a relative recency filter — an integer plus a unit (`m` minutes, `h` hours, `d` days, `w` weeks), e.g. `24h` (last 24 hours) or `3d` (last 3 days) — resolved server-side to an inclusive `saved_at >= now - window` cutoff. Only `active` entries are returned (pending/failed aren't ready to surface; failures live in the §7.4 repair surface). With no filters it returns the most recent saves. Results use the same compact shape as `retrieve` minus `score`:
+All fields optional. `tags` match **ANY** (union — an entry carrying any of them qualifies), deliberately unlike `retrieve`'s conjunctive (ALL) pre-filter, because `list` browses by topic. `window` is a relative recency filter — an integer plus a unit (`m` minutes, `h` hours, `d` days, `w` weeks), e.g. `24h` (last 24 hours) or `3d` (last 3 days) — resolved server-side to an inclusive `saved_at >= now - window` cutoff. Only `active` entries are returned (pending/failed aren't ready to surface; failures live in the §7.4 repair surface). With no filters it returns the most recent saves. Results use the same compact shape as `retrieve` (including `note_source` and `content`) minus `score`:
 
 ```json
 [
@@ -473,6 +475,8 @@ All fields optional. `tags` match **ANY** (union — an entry carrying any of th
     "title": "hyper - fast HTTP for Rust",
     "tags": ["rust", "http", "async"],
     "note": "Fast async HTTP client for Rust",
+    "note_source": "body",
+    "content": null,
     "type": "page",
     "saved_at": "2026-05-20T14:23:00Z"
   }
@@ -658,6 +662,7 @@ v2 candidates already designed-for: web management app, offline tag-clustering/m
 | Does discarding `page` body hurt exact-identifier recall on pages, given the agent can re-fetch the URL?                                                                                       | High     | Watch in dogfood (step 9); add page content only if it bites |
 | `conversation`/`clip` content is persisted and NOT capped at capture (it isn't re-fetchable, §7.5), so a very long chat thread can hit the backend body-size limit and 422. Chunk, raise the cap, or truncate-with-marker?                                  | Medium   | Watch in dogfood (step 9); only act if a long thread is rejected |
 | Element picker: is DOM expand/contract granularity enough, or do users still mis-grab blocks?                                                                                                  | Medium   | Observe in dogfood (step 9)                                  |
+| `type: note` has no URL so it never dedups (§10). Agent write-back loops can silently pile up near-duplicate notes. Content-hash (or near-duplicate) dedup for notes — deferred                | Low      | Deferred to v2; act only if duplicate notes show up in dogfood |
 | Is the canonicalize threshold (~0.90) right, or does it over- or under-merge in practice?                                                                                                      | High     | Tune against real saves in step 5; start high                |
 | Right tags-per-entry cap (3-5)?                                                                                                                                                                | Medium   | Observe in step 5                                            |
 | How should the "needs attention" notification surface - badge only, or also a browser notification?                                                                                            | Medium   | Decide in step 7-8; start with in-app badge                  |

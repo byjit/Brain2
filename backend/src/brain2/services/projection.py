@@ -1,9 +1,11 @@
 """Shared compact-entry projection for read paths (spec §10 result shape).
 
 ``retrieve`` (search) and ``list`` build the same compact dict — ``id, url, title,
-tags, note, content, type, saved_at`` — and the ranked retrieve legs append a
-relevance ``score``. Centralizing the row→dict mapping here keeps the two surfaces
-from drifting (DRY).
+tags, note, note_source, content, type, saved_at`` — and the ranked retrieve legs
+append a relevance ``score``. ``note_source`` (spec §7.3) tells the consuming agent
+how shallow the note is (body summary vs og teaser vs bare title vs user-authored),
+so it can calibrate trust before acting on it. Centralizing the row→dict mapping
+here keeps the two surfaces from drifting (DRY).
 """
 
 import sqlite3
@@ -20,9 +22,9 @@ def tags_for(conn: sqlite3.Connection, entry_id: str) -> list[str]:
 def compact_entry(conn: sqlite3.Connection, row: sqlite3.Row, *, score: float | None = None) -> dict:
     """Build the spec §10 compact result dict from an ``entries`` row.
 
-    ``row`` must expose ``id, url, title, note, content, type, saved_at``. A ``score``
-    is included only when supplied (the ranked retrieve paths); deterministic list
-    results omit it.
+    ``row`` must expose ``id, url, title, note, note_source, content, type, saved_at``.
+    A ``score`` is included only when supplied (the ranked retrieve paths);
+    deterministic list results omit it.
     """
     result = {
         "id": row["id"],
@@ -30,6 +32,7 @@ def compact_entry(conn: sqlite3.Connection, row: sqlite3.Row, *, score: float | 
         "title": row["title"],
         "tags": tags_for(conn, row["id"]),
         "note": row["note"],
+        "note_source": row["note_source"],
         "content": row["content"],
         "type": row["type"],
         "saved_at": row["saved_at"],

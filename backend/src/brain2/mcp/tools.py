@@ -121,8 +121,8 @@ def retrieve_tool(
     """Hybrid search for the current user (spec §10 retrieve, §11 BM25 + vector + RRF).
 
     Fuses BM25 (set A) and vector KNN over the note embedding (set B) with RRF (k=60).
-    Returns the compact result shape (``id, url, title, tags, note, content, type,
-    saved_at, score``) ordered best-first. ``tags``/``type`` are applied as pre-filters
+    Returns the compact result shape (``id, url, title, tags, note, note_source, content,
+    type, saved_at, score``) ordered best-first. ``tags``/``type`` are applied as pre-filters
     to both legs. The embedder is wired from config (real Gemini when keyed, else fake).
     """
     # Validate at the boundary: a negative limit otherwise hits vec0 KNN as an opaque

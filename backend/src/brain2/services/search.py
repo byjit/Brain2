@@ -120,7 +120,7 @@ def search_entries(
         params.extend(allowed_ids)
 
     sql = f"""
-        SELECT e.id, e.url, e.title, e.note, e.content, e.type, e.saved_at,
+        SELECT e.id, e.url, e.title, e.note, e.note_source, e.content, e.type, e.saved_at,
                {rank_expr} AS rank
           FROM entries_fts
           JOIN entries e ON e.id = entries_fts.id
@@ -150,7 +150,7 @@ def _rrf_scores(ranked_ids: list[str]) -> dict[str, float]:
 def _project_entry(conn: sqlite3.Connection, entry_id: str, score: float) -> dict:
     """Build the compact spec §10 result row for an entry id."""
     row = conn.execute(
-        "SELECT id, url, title, note, content, type, saved_at FROM entries WHERE id = ?",
+        "SELECT id, url, title, note, note_source, content, type, saved_at FROM entries WHERE id = ?",
         (entry_id,),
     ).fetchone()
     return compact_entry(conn, row, score=score)

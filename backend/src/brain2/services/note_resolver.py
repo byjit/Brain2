@@ -13,6 +13,7 @@ External services (page fetch, summarization) are injected as provider abstracti
 this stays unit-testable offline.
 """
 
+import re
 from dataclasses import dataclass
 
 from brain2.services.providers.page_fetcher import PageContent, PageFetcher
@@ -21,6 +22,46 @@ from brain2.services.providers.summarizer import SUMMARY_INPUT_MAX_CHARS, Summar
 # A clip shorter than this is its own note — summarizing a highlight loses the value
 # the user deliberately selected (spec §7.3).
 _SHORT_CLIP_MAX_CHARS = 400
+
+# Code-dominance heuristic (clip only). A short clip that is mostly CODE embeds poorly for
+# paraphrase search — a query like "that debounce trick" won't match a bare snippet — so a
+# code-dominant clip is captioned (summarize path) instead of taken verbatim. The verbatim
+# code stays safe in ``content`` (persisted + FTS-indexed).
+#
+# CONSTRAINT — bias to verbatim/prose; only flip when CLEARLY code. A false positive turns a
+# user's deliberate short prose into an LLM paraphrase, which is the worse failure (it loses
+# the exact words the user chose). So the thresholds below are deliberately conservative:
+# an occasional inline `identifier()` in prose must NOT trigger it.
+
+# Lines that end in a statement/block delimiter or contain a code operator/idiom are "code-ish".
+_CODE_LINE = re.compile(r"(;\s*$)|([{}]\s*$)|(=>)|(\(\)\s*;?\s*$)|(^\s+\S+\s*=\s*\S)")
+# Fraction of non-blank lines that must look like code (with 2+ such lines) to call it code.
+_CODE_LINE_RATIO = 0.5
+_MIN_CODE_LINES = 2
+
+
+def is_code_dominant(text: str) -> bool:
+    """Return True when a short clip is dominated by code rather than prose.
+
+    Conservative by design (see the module constant note): a Markdown code fence is treated
+    as unambiguous code; otherwise a majority of the clip's non-blank lines must look like
+    code before it flips. Empty/whitespace text is not code.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+
+    # The element picker emits a Markdown fence for code blocks — treat that as definitive.
+    if "```" in text:
+        return True
+
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) < _MIN_CODE_LINES:
+        # A single line is too little signal to reliably distinguish code from prose.
+        return False
+
+    code_lines = sum(1 for line in lines if _CODE_LINE.search(line))
+    return code_lines >= _MIN_CODE_LINES and code_lines / len(lines) >= _CODE_LINE_RATIO
 
 
 @dataclass(frozen=True)
@@ -68,8 +109,12 @@ def resolve_basis(entry: dict, *, fetcher: PageFetcher) -> NoteBasis:
 
     if entry_type != "page":
         text = entry.get("content") or ""
-        if len(text) < _SHORT_CLIP_MAX_CHARS:
-            # Short highlight: the selection IS the note (no LLM).
+        # Short highlight: the selection IS the note (no LLM) — UNLESS it's a code-dominant
+        # clip, which embeds poorly verbatim, so we caption it via the summarize path instead
+        # (folded into the combined tagging call; no extra LLM call). Scope is `clip` only.
+        if len(text) < _SHORT_CLIP_MAX_CHARS and not (
+            entry_type == "clip" and is_code_dominant(text)
+        ):
             return NoteBasis(text=text, note_source="body", needs_summary=False, note=text)
         return NoteBasis(text=text, note_source="body", needs_summary=True, note="")
 
@@ -120,15 +165,22 @@ def resolve_note(
     # Persisted-body types (clip/conversation): use stored content, summarizing only
     # when it is long enough that a summary adds value over the raw text.
     if entry_type != "page":
-        return _resolve_from_text(entry.get("content") or "", summarizer)
+        return _resolve_from_text(entry.get("content") or "", summarizer, entry_type=entry_type)
 
     # page: body is not persisted -> re-fetch and walk the ladder.
     return _resolve_page(entry, fetcher, summarizer)
 
 
-def _resolve_from_text(text: str, summarizer: Summarizer) -> ResolvedNote:
-    """Resolve a note from persisted body text (clip/conversation)."""
-    if len(text) < _SHORT_CLIP_MAX_CHARS:
+def _resolve_from_text(text: str, summarizer: Summarizer, *, entry_type: str) -> ResolvedNote:
+    """Resolve a note from persisted body text (clip/conversation).
+
+    Mirrors :func:`resolve_basis`: a short highlight is the note verbatim, EXCEPT a
+    code-dominant ``clip``, which is captioned (summarized) so its vector is paraphrase-
+    searchable — the verbatim code stays safe in ``content`` (spec §7.3).
+    """
+    if len(text) < _SHORT_CLIP_MAX_CHARS and not (
+        entry_type == "clip" and is_code_dominant(text)
+    ):
         # Short highlight: the selection is the note.
         return ResolvedNote(note=text, note_source="body")
     # Summarize a bounded prefix: the note is a routing card, not a full recap (spec §7.3),

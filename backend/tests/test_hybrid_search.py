@@ -59,7 +59,7 @@ def test_result_shape_matches_spec(conn):
     eid = _save_active(conn, note="rust async http client", type="clip", url="https://e.com/h", title="Hyper")
     results = hybrid_search(conn, "rust http", embedder=_EMBEDDER)
     r = next(x for x in results if x["id"] == eid)
-    assert set(r.keys()) == {"id", "url", "title", "tags", "note", "content", "type", "saved_at", "score"}
+    assert set(r.keys()) == {"id", "url", "title", "tags", "note", "note_source", "content", "type", "saved_at", "score"}
     assert isinstance(r["score"], float)
 
 
