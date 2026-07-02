@@ -2,7 +2,7 @@
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from brain2.config import get_settings
 from brain2.deps import get_db
@@ -15,7 +15,7 @@ from brain2.models.entries import (
     SaveEntryResponse,
     DeleteEntryResponse,
 )
-from brain2.services.entries import failed_entries, save_entry
+from brain2.services.entries import failed_entries, failed_entries_total, save_entry
 from brain2.services.providers.factory import build_providers, build_tagging_providers
 from brain2.services.repair import repair_entry
 
@@ -41,15 +41,20 @@ def create_entry(
 @router.get("/failed", response_model=FailedEntriesResponse)
 def list_failed_entries(
     conn: sqlite3.Connection = Depends(get_db),
+    limit: int = Query(default=50, ge=0, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> FailedEntriesResponse:
     """List the current user's failed entries for the 'needs attention' surface (spec §7.4).
 
-    Returns the failed rows plus a total count for the extension badge / web dashboard
-    consumed in M7/M8. Scoped to the current user's DB.
+    Returns a page of failed rows (``limit`` default 50, max 200; ``offset`` for paging)
+    plus ``total`` — the full failed count for the extension badge / web dashboard, so the
+    response shape stays ``{total, entries}`` while the row set is now bounded. Scoped to
+    the current user's DB.
     """
-    rows = failed_entries(conn)
+    rows = failed_entries(conn, limit=limit, offset=offset)
     return FailedEntriesResponse(
-        total=len(rows), entries=[FailedEntry(**dict(r)) for r in rows]
+        total=failed_entries_total(conn),
+        entries=[FailedEntry(**dict(r)) for r in rows],
     )
 
 

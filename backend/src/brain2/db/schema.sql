@@ -19,7 +19,10 @@ CREATE TABLE IF NOT EXISTS entries (
   -- ISO-8601 UTC time before which a retried (pending) entry must not be re-claimed.
   -- Enforces exponential backoff (spec §7.4); NULL means immediately claimable.
   next_retry_at TEXT,
-  error_message TEXT
+  error_message TEXT,
+  -- ISO-8601 UTC time this entry was last surfaced by the MCP retrieve tool's final
+  -- hit set. NULL until first retrieved. Not touched by list/save; not exposed to agents.
+  last_accessed_at TEXT
 );
 
 -- Dedup key + lookup index for URL-backed entries. Partial so the many
@@ -31,12 +34,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_url ON entries(url) WHERE url IS N
 -- ORDER BY / range bounds.
 CREATE INDEX IF NOT EXISTS idx_entries_status_saved_at ON entries(status, saved_at DESC);
 
+-- Supports the type pre-filter (services/prefilter.entry_ids_of_type), which otherwise
+-- full-scans entries to resolve the allowed id set for the retrieve type filter.
+CREATE INDEX IF NOT EXISTS idx_entries_type ON entries(type);
+
 -- Entry <-> tag edges (the bipartite graph)
 CREATE TABLE IF NOT EXISTS entry_tags (
   entry_id TEXT REFERENCES entries(id) ON DELETE CASCADE,
   tag      TEXT NOT NULL REFERENCES tags(name),
   PRIMARY KEY (entry_id, tag)
 );
+
+-- The PK is (entry_id, tag), so a tag-first lookup (the tag/type pre-filters in
+-- services/prefilter.py and services/entries.list_entries) would full-scan the junction
+-- table. This reverse index makes ``WHERE tag IN (...)`` an index range scan instead.
+CREATE INDEX IF NOT EXISTS idx_entry_tags_tag ON entry_tags(tag);
 
 -- Tag registry with stable concept descriptions
 CREATE TABLE IF NOT EXISTS tags (
@@ -52,6 +64,11 @@ CREATE TABLE IF NOT EXISTS tag_cooccurrence (
   count INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (tag_a, tag_b)
 );
+
+-- The PK is (tag_a, tag_b), so the reverse-direction lookup in tags_service._co_occurs_for
+-- (``WHERE tag_b = ?``, used to make co-occurrence symmetric) cannot use the PK. This index
+-- covers that leg so the batched get_tags co-occurrence query stays an index scan.
+CREATE INDEX IF NOT EXISTS idx_tag_cooccurrence_tag_b ON tag_cooccurrence(tag_b);
 
 -- Reversible merges. Ships in v1 even though the merge job is v2.
 CREATE TABLE IF NOT EXISTS tag_aliases (

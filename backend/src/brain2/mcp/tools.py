@@ -13,7 +13,12 @@ from brain2.config import get_settings
 from brain2.db.connection import open_user_db
 from brain2.mcp import auth
 from brain2.models.entries import CreateEntryRequest
-from brain2.services.entries import delete_entry, list_entries, save_entry
+from brain2.services.entries import (
+    delete_entry,
+    list_entries,
+    save_entry,
+    touch_last_accessed,
+)
 from brain2.services.providers.factory import build_providers
 from brain2.services.search import hybrid_search
 from brain2.services.tagging import apply_agent_tags
@@ -126,7 +131,13 @@ def retrieve_tool(
         raise ValueError("limit must be >= 0")
     _, _, embedder = build_providers(get_settings())
     with _open_current_user_db() as conn:
-        return hybrid_search(conn, query, embedder=embedder, tags=tags, type=type, limit=limit)
+        hits = hybrid_search(conn, query, embedder=embedder, tags=tags, type=type, limit=limit)
+        # Stamp last_accessed_at for exactly the returned hits (one batched UPDATE). This is
+        # the ONLY place it is set — list/save never touch it, and it is not projected back
+        # to the agent (compact_entry omits it).
+        touch_last_accessed(conn, [h["id"] for h in hits])
+        conn.commit()
+        return hits
 
 
 def list_tool(

@@ -80,7 +80,8 @@ describe("api client", () => {
     };
     const c = createClient({ baseUrl: "http://b", getToken: async () => "tok", fetchImpl });
     await c.getFailed();
-    expect(calls[0][0]).toBe("http://b/entries/failed");
+    // Defaults to the max page size (200) so the common case stays complete.
+    expect(calls[0][0]).toBe("http://b/entries/failed?limit=200&offset=0");
     expect(calls[0][1].method).toBe("GET");
     expect(calls[0][1].headers.Authorization).toBe("Bearer tok");
     expect(calls[0][1].headers["Content-Type"]).toBeUndefined();

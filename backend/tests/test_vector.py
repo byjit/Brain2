@@ -120,6 +120,41 @@ def test_negative_limit_raises_clear_error(conn):
         vector_search(conn, _EMBEDDER.embed("anything"), limit=-1)
 
 
+def test_filter_recall_beyond_overfetch(conn):
+    """Regression (Task 3): a rare tag's matches sit OUTSIDE the top ``limit*10`` nearest
+    neighbours, so the old fixed-overfetch + Python post-filter dropped them silently. The
+    escalating-k fix must still return them.
+
+    We build many near-duplicate vectors close to the query (all untagged/other-tagged) so
+    the two "rare"-tagged entries are far down the distance ranking, well past the
+    ``limit * _PREFILTER_OVERFETCH`` overfetch window.
+    """
+    dim = _EMBEDDER.dimension
+    # Query direction.
+    query = [1.0] + [0.0] * (dim - 1)
+
+    # 60 decoys tightly clustered around the query (near distance 0), none carry "rare".
+    for i in range(60):
+        vid = f"near{i}"
+        _insert(conn, id=vid, note="near")
+        v = [1.0, 0.0001 * (i + 1)] + [0.0] * (dim - 2)
+        index_entry_vector(conn, vid, v)
+    conn.commit()
+
+    # Two far entries (orthogonal-ish direction) that DO carry the rare tag.
+    for vid in ("rare1", "rare2"):
+        _insert(conn, id=vid, note="rare")
+        far = [0.0, 1.0] + [0.0] * (dim - 2)
+        index_entry_vector(conn, vid, far)
+        _tag(conn, vid, "rare")
+    conn.commit()
+
+    # With limit=5 the overfetch window is 50, but the rare matches rank ~61-62 by distance
+    # among 62 vectors — beyond that window. The escalation must still surface them.
+    ids = vector_search(conn, query, tags=["rare"], limit=5)
+    assert set(ids) == {"rare1", "rare2"}
+
+
 def test_knn_ranks_by_direction_not_magnitude(conn):
     """Lock in cosine-consistent ranking using RAW (un-normalized) vectors of differing
     magnitude — the production failure mode the FakeEmbedder's unit vectors masked.

@@ -84,3 +84,56 @@ def test_cooccurrence_is_symmetric_lookup(conn):
 
 def test_empty_db_returns_empty_list(conn):
     assert list_tags(conn) == []
+
+
+def test_batched_cooccurrence_preserves_per_tag_ordering(conn):
+    """The batched co-occurrence fetch must keep EACH tag's partners ordered exactly as the
+    old per-tag query did (count desc, partner asc) across a whole page of tags."""
+    _seed(conn)
+    rows = {r["tag"]: r for r in list_tags(conn)}
+    # rust: http(8) > async(6) > cli(4) > wasm(2), all under the 5-partner cap.
+    assert rows["rust"]["co_occurs_with"] == ["http", "async", "cli", "wasm"]
+    # Each partner sees rust back (symmetric across both stored directions).
+    for partner in ("http", "async", "cli", "wasm"):
+        assert rows[partner]["co_occurs_with"] == ["rust"]
+
+
+def test_batched_cooccurrence_caps_and_breaks_ties_by_name(conn):
+    """More than _COOCCUR_LIMIT partners: keep the top 5 by count, ties broken by name asc."""
+    _seed_tag(conn, "hub", "hub tag", 100)
+    # Seven partners; two share count 5 so the name tie-break decides which of them lands.
+    partners = {
+        "aa": 9, "bb": 8, "cc": 7, "dd": 6, "ee": 5, "ff": 5, "gg": 4,
+    }
+    for name, c in partners.items():
+        _seed_tag(conn, name, name, c)
+        _seed_cooc(conn, "hub", name, c)
+    conn.commit()
+    hub = next(r for r in list_tags(conn) if r["tag"] == "hub")
+    # Top 5 by count desc; at the count-5 tie "ee" precedes "ff" (name asc), so "ee" is in.
+    assert hub["co_occurs_with"] == ["aa", "bb", "cc", "dd", "ee"]
+
+
+def test_batched_cooccurrence_matches_naive_per_tag_query(conn):
+    """Regression: the batched result must equal a naive per-tag recomputation exactly."""
+    _seed(conn)
+
+    def naive(name):
+        rows = conn.execute(
+            """
+            SELECT partner, count FROM (
+                SELECT tag_b AS partner, count FROM tag_cooccurrence
+                 WHERE tag_a = ? AND count > 0
+                UNION ALL
+                SELECT tag_a AS partner, count FROM tag_cooccurrence
+                 WHERE tag_b = ? AND count > 0
+            )
+            ORDER BY count DESC, partner ASC
+            LIMIT 5
+            """,
+            (name, name),
+        ).fetchall()
+        return [r["partner"] for r in rows]
+
+    for row in list_tags(conn):
+        assert row["co_occurs_with"] == naive(row["tag"])

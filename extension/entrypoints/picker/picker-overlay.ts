@@ -5,35 +5,8 @@ import { isSignedOutError } from "@/entrypoints/popup/lib/is-signed-out";
 import { htmlToMarkdown } from "./html-to-markdown";
 
 // ---------------------------------------------------------------------------
-// Pure DOM-walk helpers (unit-tested in __tests__/picker-walk.test.ts)
+// Pure selection helpers (unit-tested in __tests__/picker-walk.test.ts)
 // ---------------------------------------------------------------------------
-
-/**
- * Expand the current selection one logical block upward.
- *
- * Returns the element's parent, but never climbs above `document.body`:
- * if the element is already a top-level block directly under body, it is
- * returned unchanged (clamped). This keeps the selection predictable and
- * avoids ever selecting `<body>` or `<html>`.
- */
-export function expandSelection(el: Element): Element {
-  const parent = el.parentElement;
-  // Clamp at the top of the content tree: never climb to `<body>` or `<html>`.
-  const atTop =
-    !parent ||
-    parent === document.body ||
-    parent === document.documentElement;
-  return atTop ? el : parent;
-}
-
-/**
- * Contract the current selection one level downward to the first *element*
- * child (text nodes are skipped). If the element has no element children,
- * it is returned unchanged.
- */
-export function contractSelection(el: Element): Element {
-  return el.firstElementChild ?? el;
-}
 
 /** Snapshot the data needed to build a clip from an element. */
 export function elementToClip(el: Element): {
@@ -57,6 +30,32 @@ export function hostFromUrl(url: string): string {
   }
 }
 
+/**
+ * Toggle `el` into/out of an ordered selection set while keeping the set free
+ * of nested duplicates (idempotency — a piece of content can never be selected
+ * twice):
+ *  - already selected              → removed (toggle off)
+ *  - contained by a selected element → ignored (its content is already captured
+ *                                       by the ancestor, so it can't be added)
+ *  - an ancestor of existing picks → added, and the now-subsumed descendants
+ *                                     are dropped so their content isn't duplicated
+ *
+ * Returns a new array in click order; never mutates the input.
+ */
+export function toggleSelection(selected: Element[], el: Element): Element[] {
+  // Exact match already present → toggle it off.
+  if (selected.includes(el)) return selected.filter((s) => s !== el);
+  // Content already captured by a selected ancestor → nothing to add.
+  if (selected.some((s) => s.contains(el))) return selected;
+  // Drop any selected descendants this element now subsumes, then append it.
+  return [...selected.filter((s) => !el.contains(s)), el];
+}
+
+/** Join per-element markdown blocks into one clip body, separated by a rule. */
+export function joinClips(markdowns: string[]): string {
+  return markdowns.join("\n---\n");
+}
+
 // ---------------------------------------------------------------------------
 // Overlay controller (glue — verified by compile/build + manual QA)
 // ---------------------------------------------------------------------------
@@ -71,11 +70,14 @@ let mounted = false;
 /**
  * Mount the element-picker overlay inside an isolated Shadow DOM.
  *
- * Interaction model:
+ * Interaction model (multi-select):
  *  - `mousemove` highlights the element under the cursor.
- *  - `ArrowUp` expands, `ArrowDown` contracts the current selection.
- *  - `click` (capture) freezes the selection → HTML→Markdown → review card.
- *  - `Escape` / Cancel aborts; Save sends a `clip` to the background.
+ *  - `click` (capture) toggles that element into/out of the selection set,
+ *    keeping nested picks de-duplicated (see `toggleSelection`).
+ *  - `Enter` freezes the selection → HTML→Markdown per element, joined by a
+ *    `---` rule → review card.
+ *  - `Escape` / Cancel aborts; Save sends a `clip` to the background and
+ *    confirms with a lower-right toast.
  *
  * Uses WXT's `createShadowRootUi` for style isolation and lifecycle cleanup.
  * It works with runtime-registered/programmatically-injected scripts because
@@ -86,8 +88,10 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
   if (mounted) return;
   mounted = true;
 
-  // The element currently under consideration.
+  // The element currently under the cursor (hover candidate, not yet picked).
   let current: Element | null = null;
+  // The ordered, de-duplicated set of picked elements.
+  let selected: Element[] = [];
   // Tracks whether we've switched from "picking" to "review card" mode so the
   // mousemove/keyboard handlers stop interfering once the user has captured.
   let capturing = false;
@@ -99,9 +103,11 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
     onRemove: () => teardown(),
   });
 
-  // The highlight box and the page-level listeners are created in onMount; we
-  // keep references here so teardown can detach them deterministically.
+  // The overlay chrome (hover box, persistent selection boxes, counter pill) is
+  // created in onMount; we keep references here so teardown can detach them.
   let highlight: HTMLDivElement | null = null;
+  let selectionLayer: HTMLDivElement | null = null;
+  let counter: HTMLDivElement | null = null;
   const documentListeners: Array<{
     type: string;
     handler: EventListener;
@@ -123,19 +129,79 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
     }
     documentListeners.length = 0;
     highlight = null;
+    selectionLayer = null;
+    counter = null;
     current = null;
+    selected = [];
     mounted = false;
   }
 
-  /** Position the highlight box over `el`, accounting for scroll offsets. */
+  /** Position an absolutely-positioned box over `el`, accounting for scroll. */
+  function positionBox(box: HTMLDivElement, el: Element): void {
+    const rect = el.getBoundingClientRect();
+    box.style.top = `${rect.top + window.scrollY}px`;
+    box.style.left = `${rect.left + window.scrollX}px`;
+    box.style.width = `${rect.width}px`;
+    box.style.height = `${rect.height}px`;
+  }
+
+  /** Position the transient hover highlight over `el`. */
   function positionHighlight(el: Element): void {
     if (!highlight) return;
-    const rect = el.getBoundingClientRect();
-    highlight.style.top = `${rect.top + window.scrollY}px`;
-    highlight.style.left = `${rect.left + window.scrollX}px`;
-    highlight.style.width = `${rect.width}px`;
-    highlight.style.height = `${rect.height}px`;
+    positionBox(highlight, el);
     highlight.style.display = "block";
+  }
+
+  /** Redraw the persistent selection boxes + numbered badges from `selected`. */
+  function renderSelection(): void {
+    if (!selectionLayer) return;
+    selectionLayer.replaceChildren();
+    selected.forEach((el, i) => {
+      const box = document.createElement("div");
+      Object.assign(box.style, {
+        position: "absolute",
+        boxSizing: "border-box",
+        border: `2px solid ${ACCENT}`,
+        background: "rgba(99, 102, 241, 0.20)",
+        borderRadius: "3px",
+        pointerEvents: "none",
+        zIndex: "2147483646",
+      } satisfies Partial<CSSStyleDeclaration>);
+      positionBox(box, el);
+
+      // Small numbered badge (click order) anchored to the box's top-left.
+      const badge = document.createElement("div");
+      badge.textContent = String(i + 1);
+      Object.assign(badge.style, {
+        position: "absolute",
+        top: "-9px",
+        left: "-9px",
+        minWidth: "18px",
+        height: "18px",
+        padding: "0 4px",
+        boxSizing: "border-box",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: ACCENT,
+        color: "#ffffff",
+        borderRadius: "9px",
+        font: "600 11px/1 system-ui, -apple-system, sans-serif",
+      } satisfies Partial<CSSStyleDeclaration>);
+      box.appendChild(badge);
+      selectionLayer!.appendChild(box);
+    });
+    updateCounter();
+  }
+
+  /** Reflect the selection count in the fixed hint pill. */
+  function updateCounter(): void {
+    if (!counter) return;
+    const n = selected.length;
+    counter.style.display = n === 0 ? "none" : "flex";
+    if (n > 0) {
+      counter.textContent = `${n} selected · Enter to review · Esc to cancel`;
+    }
   }
 
   /** True when the event originated inside our own overlay shadow host. */
@@ -157,6 +223,36 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
     } satisfies Partial<CSSStyleDeclaration>);
     container.appendChild(highlight);
 
+    // Layer that holds one persistent box per picked element.
+    selectionLayer = document.createElement("div");
+    Object.assign(selectionLayer.style, {
+      position: "absolute",
+      top: "0",
+      left: "0",
+      pointerEvents: "none",
+    } satisfies Partial<CSSStyleDeclaration>);
+    container.appendChild(selectionLayer);
+
+    // Minimal fixed hint pill; hidden until the first element is picked.
+    counter = document.createElement("div");
+    Object.assign(counter.style, {
+      position: "fixed",
+      bottom: "20px",
+      left: "50%",
+      transform: "translateX(-50%)",
+      display: "none",
+      alignItems: "center",
+      padding: "8px 14px",
+      background: "#0f172a",
+      color: "#f8fafc",
+      borderRadius: "999px",
+      font: "500 12px/1.4 system-ui, -apple-system, sans-serif",
+      boxShadow: "0 8px 24px -6px rgba(15, 23, 42, 0.45)",
+      pointerEvents: "none",
+      zIndex: "2147483647",
+    } satisfies Partial<CSSStyleDeclaration>);
+    container.appendChild(counter);
+
     const onMouseMove = (event: Event): void => {
       if (capturing) return;
       const e = event as MouseEvent;
@@ -173,17 +269,9 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
       if (e.key === "Escape") {
         e.preventDefault();
         ui.remove();
-        return;
-      }
-      if (!current) return;
-      if (e.key === "ArrowUp") {
+      } else if (e.key === "Enter") {
         e.preventDefault();
-        current = expandSelection(current);
-        positionHighlight(current);
-      } else if (e.key === "ArrowDown") {
-        e.preventDefault();
-        current = contractSelection(current);
-        positionHighlight(current);
+        finalize(container);
       }
     };
 
@@ -194,8 +282,10 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
       e.preventDefault();
       e.stopPropagation();
       const target = current ?? (e.target as Element | null);
-      if (!target) return;
-      capture(container, target);
+      if (!target || isOwnTarget(target)) return;
+      // Toggle into the de-duplicated selection set, then redraw.
+      selected = toggleSelection(selected, target);
+      renderSelection();
     };
 
     addDocListener("mousemove", onMouseMove, false);
@@ -203,13 +293,46 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
     addDocListener("click", onClick, true);
   }
 
-  /** Freeze the selection and swap the overlay into the review card. */
-  function capture(container: HTMLElement, el: Element): void {
+  /** Freeze the selection set and swap the overlay into the review card. */
+  function finalize(container: HTMLElement): void {
+    if (selected.length === 0) return; // nothing picked yet — Enter is a no-op
     capturing = true;
     if (highlight) highlight.style.display = "none";
-    const { html, sourceUrl, title } = elementToClip(el);
-    const md = htmlToMarkdown(html);
+    if (selectionLayer) selectionLayer.style.display = "none";
+    if (counter) counter.style.display = "none";
+
+    const clips = selected.map(elementToClip);
+    const md = joinClips(clips.map((c) => htmlToMarkdown(c.html)));
+    // All picks come from the same page, so provenance is the page itself.
+    const { sourceUrl, title } = clips[0];
     buildReviewCard(container, md, sourceUrl, title);
+  }
+
+  /** Show a minimal, auto-dismissing confirmation toast in the lower right. */
+  function showToast(container: HTMLElement, text: string): void {
+    const toast = document.createElement("div");
+    toast.textContent = text;
+    Object.assign(toast.style, {
+      position: "fixed",
+      bottom: "20px",
+      right: "20px",
+      padding: "12px 16px",
+      background: "#0f172a",
+      color: "#f8fafc",
+      borderRadius: "10px",
+      font: "500 13px/1.4 system-ui, -apple-system, sans-serif",
+      boxShadow: "0 8px 24px -6px rgba(15, 23, 42, 0.45)",
+      opacity: "0",
+      transform: "translateY(8px)",
+      transition: "opacity 0.2s ease, transform 0.2s ease",
+      pointerEvents: "none",
+      zIndex: "2147483647",
+    } satisfies Partial<CSSStyleDeclaration>);
+    container.appendChild(toast);
+    requestAnimationFrame(() => {
+      toast.style.opacity = "1";
+      toast.style.transform = "translateY(0)";
+    });
   }
 
   function buildReviewCard(
@@ -399,9 +522,13 @@ export async function mountPicker(ctx: ContentScriptContext): Promise<void> {
           },
           { to: "background" },
         );
-        status.style.color = "#059669";
-        status.textContent = "Saved ✓";
-        window.setTimeout(() => ui.remove(), 600);
+        // Confirm with a lower-right toast, then tear the overlay down. We drop
+        // the card first but keep the shadow UI mounted so the toast survives
+        // long enough to be seen (ui.remove() would destroy the shadow root).
+        backdrop.remove();
+        card.remove();
+        showToast(container, "Saved to Brain2 ✓");
+        window.setTimeout(() => ui.remove(), 2000);
       } catch (err) {
         // Keep the card open so the user's edited text is never lost.
         saveBtn.disabled = false;

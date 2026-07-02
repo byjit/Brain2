@@ -76,6 +76,54 @@ def test_save_routes_to_resolved_user_db(tmp_path):
         assert row["note"] == "private memory"
 
 
+def _last_accessed(user_id, entry_id):
+    from brain2.config import get_settings
+    from brain2.db.connection import open_user_db
+
+    with open_user_db(user_id, data_dir=get_settings().data_dir) as conn:
+        return conn.execute(
+            "select last_accessed_at from entries where id = ?", (entry_id,)
+        ).fetchone()["last_accessed_at"]
+
+
+def test_retrieve_sets_last_accessed_at_on_hits():
+    """Task 5: every entry in retrieve's final hit set gets last_accessed_at stamped."""
+    from brain2.config import get_settings
+
+    user_id = get_settings().dev_user_id
+    with auth.user_scope(user_id):
+        saved = save_tool(type="note", note="the quokka is a small marsupial")
+        assert _last_accessed(user_id, saved["id"]) is None  # not set on save
+
+        hits = retrieve_tool(query="quokka marsupial")
+        assert any(h["id"] == saved["id"] for h in hits)
+        # It is not exposed in the compact projection returned to the agent.
+        assert all("last_accessed_at" not in h for h in hits)
+
+    stamped = _last_accessed(user_id, saved["id"])
+    assert stamped is not None and stamped  # ISO-8601 timestamp written
+
+
+def test_list_does_not_set_last_accessed_at():
+    """Task 5: list is a deterministic browse and must NOT stamp last_accessed_at."""
+    from brain2.config import get_settings
+
+    user_id = get_settings().dev_user_id
+    with auth.user_scope(user_id):
+        saved = save_tool(type="note", note="deterministic browse should not touch access time")
+        # Make it surface in list: it must be active. Force it active for the read model.
+        from brain2.db.connection import open_user_db
+
+        with open_user_db(user_id, data_dir=get_settings().data_dir) as conn:
+            conn.execute("update entries set status='active' where id=?", (saved["id"],))
+            conn.commit()
+
+        results = list_tool()
+        assert any(r["id"] == saved["id"] for r in results)
+
+    assert _last_accessed(user_id, saved["id"]) is None
+
+
 def test_note_save_maps_note_to_captured_text():
     from brain2.config import get_settings
 

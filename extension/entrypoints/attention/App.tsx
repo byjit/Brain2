@@ -16,6 +16,8 @@ type AuthState = "loading" | "signed-in" | "signed-out";
 function App() {
   const [auth, setAuth] = useState<AuthState>("loading");
   const [entries, setEntries] = useState<FailedEntry[]>([]);
+  // Full failed count from the response; the loaded list may be a bounded page of it.
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [noteMap, setNoteMap] = useState<{ [id: string]: string }>({});
   const [processing, setProcessing] = useState<{ [id: string]: boolean }>({});
@@ -44,6 +46,7 @@ function App() {
         .send({}, { to: "background" })
         .then((res) => {
           setEntries(res.entries);
+          setTotal(res.total);
           const initialNotes: { [id: string]: string } = {};
           res.entries.forEach((entry) => {
             initialNotes[entry.id] = entry.note ?? "";
@@ -66,6 +69,7 @@ function App() {
       try {
         const res = await getFailedMsg.send({}, { to: "background" });
         setEntries(res.entries);
+        setTotal(res.total);
         setNoteMap((prev) => {
           const next = { ...prev };
           res.entries.forEach((entry) => {
@@ -98,6 +102,7 @@ function App() {
       if (ok) {
         toast.success("Entry repaired successfully");
         setEntries((prev) => prev.filter((e) => e.id !== id));
+        setTotal((prev) => Math.max(0, prev - 1));
       } else {
         toast.error("Repair failed. Please try again.");
       }
@@ -118,6 +123,7 @@ function App() {
       if (deleted) {
         toast.success("Entry forgotten and skipped");
         setEntries((prev) => prev.filter((e) => e.id !== id));
+        setTotal((prev) => Math.max(0, prev - 1));
       } else {
         toast.error("Failed to forget entry.");
       }
@@ -173,9 +179,9 @@ function App() {
               <h1 className="text-2xl font-extrabold tracking-tight text-foreground flex items-center gap-2">
                 <AlertCircle className="size-6 text-destructive" />
                 Needs Attention
-                {entries.length > 0 && (
+                {total > 0 && (
                   <span className="text-xs font-semibold bg-destructive/10 text-destructive border border-destructive/20 px-2 py-0.5 rounded-full ml-1">
-                    {entries.length} {entries.length === 1 ? "issue" : "issues"}
+                    {total} {total === 1 ? "issue" : "issues"}
                   </span>
                 )}
               </h1>
@@ -203,6 +209,11 @@ function App() {
               </div>
             ) : (
               <div className="space-y-4">
+                {entries.length < total && (
+                  <p className="text-xs text-muted-foreground">
+                    Showing first {entries.length} of {total}
+                  </p>
+                )}
                 {entries.map((entry) => {
                   const heading = entry.title || entry.url || "Untitled capture";
                   const isEntryProcessing = processing[entry.id];

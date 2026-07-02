@@ -188,6 +188,66 @@ def _fetch_entry(client, entry_id):
         gen.close()
 
 
+def _seed_failed(client, n):
+    """Insert ``n`` failed entries directly through the test's DB override, newest last."""
+    from brain2.deps import get_db
+
+    gen = client.app.dependency_overrides[get_db]()
+    conn = next(gen)
+    try:
+        for i in range(n):
+            # Zero-padded updated_at so lexical DESC == numeric order for the assertions.
+            ts = f"2026-01-01T00:00:{i:02d}Z"
+            conn.execute(
+                "insert into entries (id, url, note_source, type, saved_at, updated_at,"
+                " status, attempts, error_message) values (?, ?, 'body', 'page', ?, ?,"
+                " 'failed', 3, 'boom')",
+                (f"f{i:03d}", f"https://example.com/f{i}", ts, ts),
+            )
+        conn.commit()
+    finally:
+        gen.close()
+
+
+def test_failed_entries_default_shape_and_total(client):
+    _seed_failed(client, 3)
+    r = client.get("/entries/failed")
+    assert r.status_code == 200
+    data = r.json()
+    # Shape unchanged: {total, entries}.
+    assert set(data) == {"total", "entries"}
+    assert data["total"] == 3
+    assert len(data["entries"]) == 3
+    # Newest first.
+    assert [e["id"] for e in data["entries"]] == ["f002", "f001", "f000"]
+
+
+def test_failed_entries_pagination_bounds_the_page_but_keeps_total(client):
+    _seed_failed(client, 5)
+    r = client.get("/entries/failed", params={"limit": 2, "offset": 1})
+    data = r.json()
+    # total is the FULL count (the badge stays accurate); the page is bounded.
+    assert data["total"] == 5
+    assert [e["id"] for e in data["entries"]] == ["f003", "f002"]
+
+
+def test_failed_entries_default_limit_caps_page(client):
+    _seed_failed(client, 55)
+    data = client.get("/entries/failed").json()
+    assert data["total"] == 55
+    assert len(data["entries"]) == 50  # default limit
+
+
+def test_failed_entries_limit_over_max_rejected(client):
+    r = client.get("/entries/failed", params={"limit": 500})
+    assert r.status_code == 422  # le=200
+
+
+def test_failed_entries_negative_offset_rejected(client):
+    r = client.get("/entries/failed", params={"offset": -1})
+    assert r.status_code == 422
+
+
 def test_delete_entry_endpoint_success(client):
     r = _post(client, url="https://example.com/delete-me", title="Delete Me", type="page")
     entry_id = r.json()["id"]

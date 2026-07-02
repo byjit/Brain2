@@ -237,7 +237,7 @@ Each entry records `note_source` (`body | og | title | user`) so the user and th
 Background processing can fail - Gemini rate limits, a page that yields nothing, an embedding error.
 
 - **Transient failures retry quietly.** Exponential backoff up to a retry ceiling. The user is not bothered; most failures resolve here.
-- **Exhausted retries set `status = failed`** with `error_message`, and the entry surfaces as a **"needs attention"** count in the extension badge and the web dashboard. This narrow list of failed entries is the only browse surface in v1 - it exists to repair, not to browse.
+- **Exhausted retries set `status = failed`** with `error_message`, and the entry surfaces as a **"needs attention"** count in the extension badge and the web dashboard. This narrow list of failed entries is the only browse surface in v1 - it exists to repair, not to browse. `GET /entries/failed` is paged (`limit` default 50, max 200; `offset`) and returns `{ total, entries }`, where `total` is the full failed count (drives the badge/header) and `entries` is the requested page.
 - **The user repairs it** by filling the note (and optionally tags) via `PATCH /entries/{id}`. On submit, the entry re-enters processing using the user's text as the basis: embed note → auto-tag from it → index → `active`. A failed entry is never a silent black hole; it is always recoverable by the user.
 
 ### 7.5 Large content and capture size bounds

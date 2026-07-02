@@ -50,7 +50,12 @@ interface RequestOptions {
 
 export interface Brain2ApiClient {
   save: (req: SaveRequest) => Promise<SaveResult>;
-  getFailed: () => Promise<FailedList>;
+  /**
+   * GET /entries/failed. The endpoint is paged (`limit` default 50, max 200; `offset`);
+   * the returned `total` is the full failed count. Defaults to `limit=200` (the max) so
+   * the common case stays complete without a pagination UI.
+   */
+  getFailed: (params?: { limit?: number; offset?: number }) => Promise<FailedList>;
   repair: (input: { id: string; note: string; tags?: string[] }) => Promise<void>;
   deleteEntry: (id: string) => Promise<boolean>;
 }
@@ -126,8 +131,12 @@ export const createClient = ({
       return parseJson(res, SaveResult, "POST /entries");
     },
 
-    getFailed: async () => {
-      const res = await request({ method: "GET", path: "/entries/failed" });
+    getFailed: async (params) => {
+      // Request the max page size by default so the practical common case stays complete.
+      const limit = params?.limit ?? 200;
+      const offset = params?.offset ?? 0;
+      const query = `?limit=${limit}&offset=${offset}`;
+      const res = await request({ method: "GET", path: `/entries/failed${query}` });
       return parseJson(res, FailedList, "GET /entries/failed");
     },
 

@@ -19,6 +19,8 @@ interface NeedsAttentionProps {
  */
 export function NeedsAttention({ count }: NeedsAttentionProps) {
   const [entries, setEntries] = useState<FailedEntry[]>([]);
+  // Full failed count from the response; the loaded list may be a bounded page of it.
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [isFirstLoad, setIsFirstLoad] = useState(true);
 
@@ -36,6 +38,7 @@ export function NeedsAttention({ count }: NeedsAttentionProps) {
       .then((res) => {
         if (!cancelled) {
           setEntries(res.entries);
+          setTotal(res.total);
           setIsFirstLoad(false);
         }
       })
@@ -70,7 +73,7 @@ export function NeedsAttention({ count }: NeedsAttentionProps) {
     <div className="space-y-3">
       <h2 className="flex items-center gap-1.5 text-xs font-semibold text-destructive uppercase tracking-wider">
         <AlertCircle className="size-3.5 text-destructive" />
-        Needs Attention ({entries.length})
+        Needs Attention ({total})
       </h2>
       {loading ? (
         <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
@@ -84,9 +87,10 @@ export function NeedsAttention({ count }: NeedsAttentionProps) {
             <RepairRow
               key={entry.id}
               entry={entry}
-              onRemoved={() =>
-                setEntries((prev) => prev.filter((e) => e.id !== entry.id))
-              }
+              onRemoved={() => {
+                setEntries((prev) => prev.filter((e) => e.id !== entry.id));
+                setTotal((prev) => Math.max(0, prev - 1));
+              }}
             />
           ))}
         </div>

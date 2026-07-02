@@ -77,6 +77,8 @@ function DashboardPage() {
 	const [user, setUser] = useState<UserProfile | null>(null);
 	const [tokens, setTokens] = useState<TokenInfo[]>([]);
 	const [failedEntries, setFailedEntries] = useState<FailedEntry[]>([]);
+	// Full failed count from the response; the loaded list may be a bounded page of it.
+	const [failedTotal, setFailedTotal] = useState(0);
 	const [loading, setLoading] = useState(true);
 	const [newTokenName, setNewTokenName] = useState("");
 	const [creating, setCreating] = useState(false);
@@ -114,9 +116,10 @@ function DashboardPage() {
 				setTokens(tokensData.filter((t: TokenInfo) => !t.revoked));
 			}
 
-			// Fetch Failed Entries
+			// Fetch Failed Entries. The endpoint is paged (limit default 50, max 200;
+			// offset); request the max page size so the common case stays complete.
 			const failedRes = await fetch(
-				`${env.VITE_BRAIN2_API_URL}/entries/failed`,
+				`${env.VITE_BRAIN2_API_URL}/entries/failed?limit=200&offset=0`,
 				{
 					credentials: "include",
 				},
@@ -124,6 +127,7 @@ function DashboardPage() {
 			if (failedRes.ok) {
 				const failedData = await failedRes.json();
 				setFailedEntries(failedData.entries || []);
+				setFailedTotal(failedData.total ?? (failedData.entries?.length || 0));
 			}
 		} catch (err) {
 			console.error("Failed to load dashboard data", err);
@@ -155,6 +159,7 @@ function DashboardPage() {
 
 			toast.success("Entry repaired successfully!");
 			setFailedEntries((prev) => prev.filter((e) => e.id !== entryId));
+			setFailedTotal((prev) => Math.max(0, prev - 1));
 		} catch (err) {
 			console.error("Failed to repair entry", err);
 			toast.error("Failed to repair entry. Please try again.");
@@ -312,7 +317,7 @@ function DashboardPage() {
 						<CardHeader className="pb-3">
 							<CardTitle className="text-lg font-semibold flex items-center gap-2 text-destructive">
 								<AlertTriangle className="h-5 w-5 animate-pulse" />
-								Needs Attention ({failedEntries.length})
+								Needs Attention ({failedTotal})
 							</CardTitle>
 							<CardDescription className="text-xs mt-1.5 text-muted-foreground font-medium leading-relaxed">
 								Some captures could not be processed automatically. Please add a
@@ -320,6 +325,11 @@ function DashboardPage() {
 							</CardDescription>
 						</CardHeader>
 						<CardContent className="space-y-4 pt-0">
+							{failedEntries.length < failedTotal && (
+								<p className="text-xs text-muted-foreground font-medium">
+									Showing first {failedEntries.length} of {failedTotal}
+								</p>
+							)}
 							<div className="space-y-4">
 								{failedEntries.map((entry) => (
 									<FailedEntryItem

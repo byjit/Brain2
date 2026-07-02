@@ -5,9 +5,21 @@ upserts the 768-dim vector here; ``vector_search`` runs a sqlite-vec ``vec0`` KN
 those vectors and returns ranked entry ids (set B for the RRF merge in ``search``).
 
 Tag/type pre-filters are applied around the KNN (same filters as the BM25 leg) so a
-filtered-out entry never appears. The vec0 ``MATCH ... AND k = ?`` form cannot join with
-arbitrary WHERE clauses, so when pre-filters are present we over-fetch neighbors and keep
-only those in the allowed id set, preserving distance order.
+filtered-out entry never appears.
+
+Filter strategy (sqlite-vec 0.1.9). vec0's ``id IN (...)`` clause on a TEXT-PK table is a
+*post*-filter over the k nearest neighbours, not a pushdown into the distance computation:
+a filtered match that sits outside the top-k by raw distance is silently dropped even
+though it is a true nearest neighbour among the filtered set (verified empirically — see
+``tests/test_vector.py::test_filter_recall_beyond_overfetch``). Only true scalar metadata
+columns are pushed down, and tags are many-to-many so cannot be metadata columns. To fix
+the silent recall loss we ESCALATE ``k``: start at ``limit * overfetch`` and, whenever the
+filtered survivor count is short of ``limit`` while unfetched rows remain, retry with a
+larger ``k`` up to the full table size. This guarantees up to ``limit`` true nearest
+matches among the filtered set (correctness). The common (non-escalating) case is
+unchanged — a single KNN at ``limit * overfetch``; only the escalation path costs
+additional full scans (O(n) per iteration, up to ~log2 iterations), accepted to guarantee
+recall.
 """
 
 import sqlite3
@@ -20,9 +32,9 @@ from brain2.services.prefilter import entry_ids_of_type, entry_ids_with_all_tags
 # so a modest candidate pool per leg is sufficient.
 _DEFAULT_K = 10
 
-# When pre-filters are active we over-fetch, because many top neighbors may be filtered
-# out before we have ``k`` survivors. A generous multiple keeps recall high without
-# scanning the whole table.
+# When pre-filters are active we start by over-fetching, because many top neighbors may be
+# filtered out before we have ``k`` survivors. A generous multiple keeps the common case
+# to a single query; the escalation below guarantees correctness beyond it.
 _PREFILTER_OVERFETCH = 10
 
 
@@ -98,18 +110,30 @@ def vector_search(
     if allowed is not None and not allowed:
         return []
 
-    # Over-fetch when filtering so enough survivors remain after the in-Python filter.
-    k = limit if allowed is None else limit * _PREFILTER_OVERFETCH
-    rows = conn.execute(
-        """
-        SELECT id FROM entries_vec
-         WHERE embedding MATCH ? AND k = ?
-         ORDER BY distance
-        """,
-        (sqlite_vec.serialize_float32(query_embedding), k),
-    ).fetchall()
+    query_vec = sqlite_vec.serialize_float32(query_embedding)
 
-    ids = [row[0] for row in rows]
-    if allowed is not None:
-        ids = [i for i in ids if i in allowed]
-    return ids[:limit]
+    # Unfiltered: a single KNN at ``limit`` is exact.
+    if allowed is None:
+        rows = conn.execute(
+            "SELECT id FROM entries_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+            (query_vec, limit),
+        ).fetchall()
+        return [row[0] for row in rows[:limit]]
+
+    # Filtered: vec0's post-filter drops filtered matches that fall outside the current
+    # top-k, so escalate ``k`` until we have ``limit`` survivors or have scanned the whole
+    # table. This is the correctness fix for the silent recall loss (see module docstring).
+    total = conn.execute("SELECT count(*) FROM entries_vec").fetchone()[0]
+    if total == 0:
+        return []
+    k = min(max(limit * _PREFILTER_OVERFETCH, limit), total)
+    while True:
+        rows = conn.execute(
+            "SELECT id FROM entries_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+            (query_vec, k),
+        ).fetchall()
+        survivors = [row[0] for row in rows if row[0] in allowed]
+        # Enough survivors, or we've already considered every vector in the table.
+        if len(survivors) >= limit or k >= total:
+            return survivors[:limit]
+        k = min(k * 2, total)

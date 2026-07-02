@@ -100,3 +100,81 @@ def test_schema_application_is_idempotent(tmp_path):
         pass
     with open_user_db("grace", data_dir=tmp_path) as conn:
         assert conn.execute("select count(*) from entries").fetchone()[0] == 0
+
+
+# --- Task 1: the new supporting indexes exist -----------------------------------
+
+def _index_names(conn):
+    return {
+        r[0]
+        for r in conn.execute("select name from sqlite_master where type = 'index'")
+    }
+
+
+def test_new_indexes_exist(tmp_path):
+    with open_user_db("idx-user", data_dir=tmp_path) as conn:
+        names = _index_names(conn)
+    for expected in (
+        "idx_entry_tags_tag",
+        "idx_entries_type",
+        "idx_tag_cooccurrence_tag_b",
+    ):
+        assert expected in names, f"missing index {expected}"
+
+
+def test_last_accessed_at_column_exists(tmp_path):
+    with open_user_db("lac-user", data_dir=tmp_path) as conn:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(entries)")}
+    assert "last_accessed_at" in cols
+
+
+# --- Task 4b: user_version gating -----------------------------------------------
+
+def test_user_version_stamped_on_open(tmp_path):
+    from brain2.db.migrations import SCHEMA_VERSION
+
+    with open_user_db("uv-user", data_dir=tmp_path) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+
+
+class _SchemaPathSpy:
+    """Wraps the real schema Path and counts each read_text (== one DDL application)."""
+
+    def __init__(self, real):
+        self._real = real
+        self.reads = 0
+
+    def read_text(self, *a, **k):
+        self.reads += 1
+        return self._real.read_text(*a, **k)
+
+
+def test_schema_apply_skipped_when_version_matches(tmp_path, monkeypatch):
+    # First open applies + stamps the version. On reopen the version matches, so
+    # apply_schema must NOT re-read/re-run the schema DDL (the per-request perf gate).
+    import brain2.db.migrations as migrations
+
+    with open_user_db("uv-skip", data_dir=tmp_path):
+        pass
+
+    spy = _SchemaPathSpy(migrations._SCHEMA_PATH)
+    monkeypatch.setattr(migrations, "_SCHEMA_PATH", spy)
+    with open_user_db("uv-skip", data_dir=tmp_path) as conn:
+        conn.execute("select 1")
+    assert spy.reads == 0, "schema must not be re-applied when user_version matches"
+
+
+def test_schema_reapplied_on_version_bump(tmp_path, monkeypatch):
+    # A DB at an older user_version must have the schema re-applied on next open.
+    import brain2.db.migrations as migrations
+    from brain2.db.migrations import SCHEMA_VERSION
+
+    with open_user_db("uv-bump", data_dir=tmp_path) as conn:
+        conn.execute("PRAGMA user_version = 0")
+        conn.commit()
+
+    spy = _SchemaPathSpy(migrations._SCHEMA_PATH)
+    monkeypatch.setattr(migrations, "_SCHEMA_PATH", spy)
+    with open_user_db("uv-bump", data_dir=tmp_path) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    assert spy.reads == 1, "schema must be re-applied when user_version is stale"

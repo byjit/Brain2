@@ -1,50 +1,71 @@
 /** @vitest-environment jsdom */
 import { describe, it, expect, beforeEach } from "vitest";
 import {
-  expandSelection,
-  contractSelection,
+  toggleSelection,
+  joinClips,
   elementToClip,
 } from "@/entrypoints/picker/picker-overlay";
 
 beforeEach(() => {
   document.body.innerHTML = `
-    <section id="outer"><article id="mid"><p id="inner">hello <b id="leaf">world</b></p></article></section>`;
+    <section id="outer"><article id="mid"><p id="inner">hello <b id="leaf">world</b></p></article></section>
+    <aside id="sibling">note</aside>`;
 });
 
-describe("DOM walk", () => {
-  it("expandSelection climbs to the parent block", () => {
-    const inner = document.getElementById("inner")!;
-    expect(expandSelection(inner).id).toBe("mid");
+const el = (id: string): Element => document.getElementById(id)!;
+
+describe("toggleSelection", () => {
+  it("adds an element to an empty set", () => {
+    const next = toggleSelection([], el("inner"));
+    expect(next.map((e) => e.id)).toEqual(["inner"]);
   });
 
-  it("expandSelection clamps at body (top-level block returns itself)", () => {
-    const outer = document.getElementById("outer")!;
-    expect(expandSelection(outer)).toBe(outer); // parent is body → clamp
+  it("appends disjoint elements in click order", () => {
+    let sel = toggleSelection([], el("inner"));
+    sel = toggleSelection(sel, el("sibling"));
+    expect(sel.map((e) => e.id)).toEqual(["inner", "sibling"]);
   });
 
-  it("expandSelection on <body> clamps to body (never climbs to <html>)", () => {
-    expect(expandSelection(document.body)).toBe(document.body);
+  it("toggles an already-selected element off", () => {
+    const sel = toggleSelection([el("inner")], el("inner"));
+    expect(sel).toEqual([]);
   });
 
-  it("contractSelection descends to the first child element", () => {
-    const mid = document.getElementById("mid")!;
-    expect(contractSelection(mid).id).toBe("inner");
+  it("ignores a descendant of an already-selected element (no double-select)", () => {
+    const sel = toggleSelection([el("mid")], el("leaf"));
+    expect(sel.map((e) => e.id)).toEqual(["mid"]);
   });
 
-  it("contractSelection on a leaf returns itself", () => {
-    const leaf = document.getElementById("leaf")!;
-    expect(contractSelection(leaf)).toBe(leaf);
+  it("subsumes selected descendants when their ancestor is added", () => {
+    let sel = toggleSelection([], el("leaf"));
+    sel = toggleSelection(sel, el("inner")); // inner contains leaf
+    expect(sel.map((e) => e.id)).toEqual(["inner"]);
   });
 
-  it("contractSelection skips leading text nodes to the first child element", () => {
-    const inner = document.getElementById("inner")!;
-    // <p id="inner">hello <b id="leaf">world</b></p> — first node is text "hello "
-    expect(contractSelection(inner).id).toBe("leaf");
+  it("does not mutate the input array", () => {
+    const input = [el("sibling")];
+    toggleSelection(input, el("inner"));
+    expect(input.map((e) => e.id)).toEqual(["sibling"]);
+  });
+});
+
+describe("joinClips", () => {
+  it("joins blocks with a horizontal rule", () => {
+    expect(joinClips(["# A", "# B"])).toBe("# A\n---\n# B");
   });
 
-  it("elementToClip returns outerHTML + source url + title", () => {
-    const inner = document.getElementById("inner")!;
-    const clip = elementToClip(inner);
+  it("returns a single block unchanged", () => {
+    expect(joinClips(["only"])).toBe("only");
+  });
+
+  it("returns an empty string for no blocks", () => {
+    expect(joinClips([])).toBe("");
+  });
+});
+
+describe("elementToClip", () => {
+  it("returns outerHTML + source url + title", () => {
+    const clip = elementToClip(el("inner"));
     expect(clip.html).toContain("hello");
     expect(clip.html).toContain('id="inner"');
     expect(typeof clip.sourceUrl).toBe("string");

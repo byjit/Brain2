@@ -199,20 +199,37 @@ def _update_existing(
     return SaveEntryResponse(id=existing_id, status=SaveStatus.UPDATED)
 
 
-def failed_entries(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    """Return the user's failed entries for the 'needs attention' surface (spec §7.4).
+def failed_entries(
+    conn: sqlite3.Connection, *, limit: int = 50, offset: int = 0
+) -> list[sqlite3.Row]:
+    """Return a page of the user's failed entries for the 'needs attention' surface (§7.4).
 
     Read-only. Scoped to the current user's DB (the caller opens it). Newest first so the
-    dashboard/badge shows the most recent failures at the top. Only the §7.4 repair fields
-    are needed downstream, but returning the rows keeps the model mapping in one place.
+    dashboard/badge shows the most recent failures at the top. Paged with ``limit``/
+    ``offset`` so a user with many failures never fetches an unbounded set; the caller pairs
+    this with ``failed_entries_total`` for the full count. Only the §7.4 repair fields are
+    needed downstream, but returning the rows keeps the model mapping in one place.
     """
+    if limit < 0:
+        raise ValueError("limit must be >= 0")
+    if offset < 0:
+        raise ValueError("offset must be >= 0")
     return conn.execute(
         """
         SELECT id, url, title, note, error_message, updated_at
           FROM entries WHERE status = 'failed'
          ORDER BY updated_at DESC
-        """
+         LIMIT ? OFFSET ?
+        """,
+        (limit, offset),
     ).fetchall()
+
+
+def failed_entries_total(conn: sqlite3.Connection) -> int:
+    """Total count of the user's failed entries (the badge count, independent of paging)."""
+    return conn.execute(
+        "SELECT count(*) FROM entries WHERE status = 'failed'"
+    ).fetchone()[0]
 
 
 def list_entries(
@@ -277,6 +294,24 @@ def list_entries(
     params.extend([limit, offset])
     rows = conn.execute(sql, params).fetchall()
     return [compact_entry(conn, row) for row in rows]
+
+
+def touch_last_accessed(conn: sqlite3.Connection, entry_ids: list[str]) -> None:
+    """Stamp ``last_accessed_at`` = now (ISO-8601 UTC) for the given entries. Caller commits.
+
+    Called with the MCP ``retrieve`` tool's final hit set so the store can surface
+    recently-used memories (spec browse/relevance signal). One batched UPDATE regardless of
+    the hit count. NOT called by ``list`` (deterministic browse) or on save, and the column
+    is never returned in the compact projection sent to agents.
+    """
+    if not entry_ids:
+        return
+    now = _now_iso()
+    placeholders = ",".join("?" for _ in entry_ids)
+    conn.execute(
+        f"UPDATE entries SET last_accessed_at = ? WHERE id IN ({placeholders})",
+        (now, *entry_ids),
+    )
 
 
 def delete_entry(conn: sqlite3.Connection, entry_id: str) -> bool:
